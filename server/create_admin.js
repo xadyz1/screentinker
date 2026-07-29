@@ -20,16 +20,11 @@ try {
   db.prepare('INSERT INTO organization_members (organization_id, user_id, role) VALUES (?, ?, ?)').run(orgId, userId, 'admin');
   db.prepare('INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (?, ?, ?)').run(workspaceId, userId, 'admin');
   
-  const d = require('./db/database').dbOptions;
-  if (d.syncUrl) db.sync();
-
   console.log('Admin created successfully.');
 } catch (e) {
   if (e.message.includes('UNIQUE constraint failed')) {
      console.log('User already exists, updating password and role.');
      db.prepare('UPDATE users SET password_hash = ?, role = ? WHERE email = ?').run(hash, 'platform_admin', email);
-     const d = require('./db/database').dbOptions;
-     if (d.syncUrl) db.sync();
   } else {
      console.error(e);
   }

@@ -17,6 +17,7 @@ const dbOptions = {};
 if (config.bunnyDbUrl && config.bunnyDbAuthToken) {
   dbOptions.syncUrl = config.bunnyDbUrl;
   dbOptions.authToken = config.bunnyDbAuthToken;
+  dbOptions.syncInterval = 2000;
 }
 let db;
 try {
@@ -45,6 +46,44 @@ try {
   } else {
     throw e;
   }
+}
+
+// Monkey-patch libSQL to provide immediate read-after-write consistency for embedded replicas
+if (dbOptions.syncUrl && typeof db.sync === 'function') {
+  const originalPrepare = db.prepare;
+  db.prepare = function(sql) {
+    const stmt = originalPrepare.call(this, sql);
+    const originalRun = stmt.run;
+    stmt.run = function(...args) {
+      const result = originalRun.apply(this, args);
+      if (!db.inTransaction) {
+        try { db.sync(); } catch (err) { console.error('[libsql] Auto-sync failed after prepare.run:', err.message); }
+      }
+      return result;
+    };
+    return stmt;
+  };
+
+  const originalExec = db.exec;
+  db.exec = function(sql) {
+    const result = originalExec.call(this, sql);
+    if (!db.inTransaction) {
+      try { db.sync(); } catch (err) { console.error('[libsql] Auto-sync failed after exec:', err.message); }
+    }
+    return result;
+  };
+
+  const originalTransaction = db.transaction;
+  db.transaction = function(fn) {
+    const tx = originalTransaction.call(this, fn);
+    return function(...args) {
+      const result = tx.apply(this, args);
+      if (!db.inTransaction) {
+        try { db.sync(); } catch (err) { console.error('[libsql] Auto-sync failed after transaction:', err.message); }
+      }
+      return result;
+    };
+  };
 }
 
 // Enable foreign keys (and WAL mode if supported)
