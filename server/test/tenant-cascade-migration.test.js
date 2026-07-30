@@ -7,7 +7,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const Database = require('better-sqlite3');
+const Database = require('libsql');
 const { applyTenantDeleteCascade } = require('../lib/tenant-cascade-migration');
 
 function freshDb() {
@@ -59,7 +59,8 @@ test('migration rewrites the FK actions (CASCADE for tenant tables, SET NULL for
   // index recreated, data intact, foreign_keys restored to ON
   assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_playlists_workspace'").get(), 'index preserved');
   assert.equal(db.prepare('SELECT COUNT(*) c FROM playlists').get().c, 2, 'rows preserved');
-  assert.equal(db.pragma('foreign_keys', { simple: true }), 1, 'foreign_keys ON again');
+  const fkVal = db.pragma('foreign_keys', { simple: true });
+  assert.ok(fkVal === 1 || fkVal.foreign_keys === 1, 'foreign_keys ON again');
   assert.equal(db.prepare('PRAGMA foreign_key_check').all().length, 0, 'no FK violations');
   db.close();
 });

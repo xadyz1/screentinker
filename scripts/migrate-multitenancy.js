@@ -31,7 +31,7 @@ const SERVER_DIR = path.resolve(__dirname, '..', 'server');
 // database.js - Node resolves modules relative to the required file's own
 // __dirname, not the caller's.
 const resolveFromServer = (name) => require.resolve(name, { paths: [SERVER_DIR] });
-const Database = require(resolveFromServer('better-sqlite3'));
+const Database = require(resolveFromServer('libsql'));
 const { v4: uuidv4 } = require(resolveFromServer('uuid'));
 const config = require(path.join(SERVER_DIR, 'config'));
 

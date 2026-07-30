@@ -6,7 +6,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const Database = require('better-sqlite3');
+const Database = require('libsql');
 
 process.env.JWT_SECRET = 'test-secret-widget-xss';
 

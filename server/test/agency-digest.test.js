@@ -7,7 +7,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const Database = require('better-sqlite3');
+const Database = require('libsql');
 const { flushAgencyDigests, resolveRecipients } = require('../services/agency-digest');
 
 function freshDb() {

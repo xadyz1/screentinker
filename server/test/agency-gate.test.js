@@ -8,7 +8,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const Database = require('better-sqlite3');
+const Database = require('libsql');
 
 // agencyGate needs no db now, but requiring the module loads db/database - inject a stub.
 require.cache[require.resolve('../db/database')] = {

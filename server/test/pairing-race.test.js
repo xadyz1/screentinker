@@ -35,7 +35,7 @@ const os = require('node:os');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const ioClient = require('socket.io-client');
-const Database = require('better-sqlite3');
+const Database = require('libsql');
 
 const { freePort } = require('./helpers/free-port');
 
@@ -54,7 +54,7 @@ before(async () => {
   proc = spawn('node', ['server.js'], {
     cwd: path.join(__dirname, '..'),
     env: {
-      ...process.env,
+      ...process.env, BUNNY_DATABASE_URL: '', BUNNY_DATABASE_AUTH_TOKEN: '',
       DATA_DIR,
       SELF_HOSTED: 'true',
       PORT: String(PORT),

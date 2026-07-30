@@ -27,7 +27,7 @@ before(async () => {
     PORT = await freePort();
     BASE = `http://127.0.0.1:${PORT}`;
   const logFd = fs.openSync(LOG, 'w');
-  proc = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test' }, stdio: ['ignore', logFd, logFd] });
+  proc = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, BUNNY_DATABASE_URL: '', BUNNY_DATABASE_AUTH_TOKEN: '', DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test' }, stdio: ['ignore', logFd, logFd] });
   let up = false;
   for (let i = 0; i < 80; i++) { try { const r = await fetch(BASE + '/api/status'); if (r.ok) { up = true; break; } } catch { /* */ } await sleep(250); }
   if (!up) throw new Error('server did not boot:\n' + fs.readFileSync(LOG, 'utf8').slice(-2000));

@@ -43,7 +43,7 @@ before(async () => {
   const logFd = fs.openSync(LOG, 'w');
   proc = spawn('node', ['server.js'], {
     cwd: path.join(__dirname, '..'),
-    env: { ...process.env, DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test' },
+    env: { ...process.env, BUNNY_DATABASE_URL: '', BUNNY_DATABASE_AUTH_TOKEN: '', DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test' },
     stdio: ['ignore', logFd, logFd],
   });
   // wait for the server to answer /api/status
@@ -85,7 +85,7 @@ before(async () => {
 
   // a paired device with a known token (for the WS round-trip) - inserted into the
   // server's live DB (WAL: a second connection's commit is visible to the server).
-  const db = new (require('better-sqlite3'))(path.join(DATA_DIR, 'db', 'remote_display.db'), { timeout: 5000 });
+  const db = new (require('libsql'))(path.join(DATA_DIR, 'db', 'remote_display.db'), { timeout: 5000 });
   S.deviceId = crypto.randomUUID();
   S.deviceToken = 'devtok_' + crypto.randomBytes(16).toString('hex');
   db.prepare("INSERT INTO devices (id,name,user_id,workspace_id,device_token,status,created_at) VALUES (?,?,?,?,?,'offline',strftime('%s','now'))")

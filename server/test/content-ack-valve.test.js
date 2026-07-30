@@ -29,7 +29,7 @@ before(async () => {
   proc = spawn('node', ['server.js'], {
     cwd: path.join(__dirname, '..'),
     env: {
-      ...process.env, DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test',
+      ...process.env, BUNNY_DATABASE_URL: '', BUNNY_DATABASE_AUTH_TOKEN: '', DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test',
       LAG_CRITICAL_MS: '1', LAG_ELEVATED_MS: '1', LAG_SAMPLE_INTERVAL_MS: '150', // tiny thresholds (NOT 0 — config uses `|| default`, 0 is falsy) -> band critical immediately
       CONTENT_ACK_MAX_PER_WINDOW: '1000', CONTENT_ACK_RATE_WINDOW_MS: '10000',   // high, so the VALVE is what sheds
     },

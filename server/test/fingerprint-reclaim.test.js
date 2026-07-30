@@ -14,7 +14,7 @@ const os = require('node:os');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const ioClient = require('socket.io-client');
-const Database = require('better-sqlite3');
+const Database = require('libsql');
 
 const { freePort } = require('./helpers/free-port');
 let PORT, BASE;
@@ -30,7 +30,7 @@ before(async () => {
   const logFd = fs.openSync(LOG, 'w');
   proc = spawn('node', ['server.js'], {
     cwd: path.join(__dirname, '..'),
-    env: { ...process.env, DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test', RECLAIM_SETTLE_SECONDS: '300', RECLAIM_REJECT_LOG_WINDOW_MS: '60000' },
+    env: { ...process.env, BUNNY_DATABASE_URL: '', BUNNY_DATABASE_AUTH_TOKEN: '', DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test', RECLAIM_SETTLE_SECONDS: '300', RECLAIM_REJECT_LOG_WINDOW_MS: '60000' },
     stdio: ['ignore', logFd, logFd],
   });
   let up = false;

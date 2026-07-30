@@ -11,7 +11,7 @@ const path = require('node:path');
 const os = require('node:os');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
-const Database = require('better-sqlite3');
+const Database = require('libsql');
 
 const { freePort } = require('./helpers/free-port');
 let PORT, BASE;
@@ -26,7 +26,7 @@ before(async () => {
   proc = spawn('node', ['server.js'], {
     cwd: path.join(__dirname, '..'),
     env: {
-      ...process.env, DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test',
+      ...process.env, BUNNY_DATABASE_URL: '', BUNNY_DATABASE_AUTH_TOKEN: '', DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test',
       LAG_SAMPLE_INTERVAL_MS: '200',          // sample fast
       LAG_FLUSH_MS: '200',                    // #146 Item E: batch-insert fast so persistence is observable in-test
       LAG_TELEMETRY_RETENTION_DAYS: '0.00001', // ~0.86s retention

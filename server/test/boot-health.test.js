@@ -13,7 +13,7 @@ const path = require('node:path');
 const os = require('node:os');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
-const Database = require('better-sqlite3');
+const Database = require('libsql');
 const { freePort } = require('./helpers/free-port');
 
 const DATA_DIR = path.join(os.tmpdir(), 'st-boot-' + crypto.randomBytes(4).toString('hex'));
@@ -25,7 +25,7 @@ test('boots + serves /api/status quickly against a pre-bloated table; prune drai
   const SEED_PORT = await freePort();
   // 1) Create + migrate the DB in a throwaway boot, then seed a large backlog.
   {
-    const p = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, DATA_DIR, SELF_HOSTED: 'true', PORT: String(SEED_PORT), NODE_ENV: 'test' }, stdio: 'ignore' });
+    const p = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, BUNNY_DATABASE_URL: '', BUNNY_DATABASE_AUTH_TOKEN: '', DATA_DIR, SELF_HOSTED: 'true', PORT: String(SEED_PORT), NODE_ENV: 'test' }, stdio: 'ignore' });
     for (let i = 0; i < 60; i++) { try { const r = await fetch(`http://127.0.0.1:${SEED_PORT}/api/status`); if (r.ok) break; } catch { /* */ } await new Promise(r => setTimeout(r, 200)); }
     p.kill('SIGKILL');
     await new Promise(r => setTimeout(r, 300));
@@ -38,7 +38,7 @@ test('boots + serves /api/status quickly against a pre-bloated table; prune drai
   seed.close();
 
   // 2) Boot for real against the bloated table; time to first /api/status OK.
-  const proc = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test', STATUS_LOG_MAX_ROWS_PER_DEVICE: '500' }, stdio: ['ignore', fs.openSync(path.join(os.tmpdir(), 'st-boot.log'), 'w'), 'inherit'] });
+  const proc = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, BUNNY_DATABASE_URL: '', BUNNY_DATABASE_AUTH_TOKEN: '', DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test', STATUS_LOG_MAX_ROWS_PER_DEVICE: '500' }, stdio: ['ignore', fs.openSync(path.join(os.tmpdir(), 'st-boot.log'), 'w'), 'inherit'] });
   try {
     const t0 = Date.now();
     let up = false;

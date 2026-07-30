@@ -13,7 +13,7 @@
 const path = require('path');
 let Database;
 try {
-  Database = require('better-sqlite3');
+  Database = require('libsql');
 } catch (e) {
   // Resolve from the server's node_modules when run from the repo root.
   Database = require(path.join(__dirname, '..', 'server', 'node_modules', 'better-sqlite3'));

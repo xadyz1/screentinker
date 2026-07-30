@@ -24,7 +24,7 @@ function bootServer(jwtSecret) {
   const logFd = fs.openSync(path.join(os.tmpdir(), 'st-rot-' + crypto.randomBytes(3).toString('hex') + '.log'), 'w');
   return spawn('node', ['server.js'], {
     cwd: path.join(__dirname, '..'),
-    env: { ...process.env, DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test', JWT_SECRET: jwtSecret },
+    env: { ...process.env, BUNNY_DATABASE_URL: '', BUNNY_DATABASE_AUTH_TOKEN: '', DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test', JWT_SECRET: jwtSecret },
     stdio: ['ignore', logFd, logFd],
   });
 }

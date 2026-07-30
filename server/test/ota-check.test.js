@@ -32,7 +32,7 @@ before(async () => {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(path.join(DATA_DIR, 'ScreenTinker.apk'), Buffer.alloc(1024, 1));
   const logFd = fs.openSync(LOG, 'w');
-  proc = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test' }, stdio: ['ignore', logFd, logFd] });
+  proc = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, BUNNY_DATABASE_URL: '', BUNNY_DATABASE_AUTH_TOKEN: '', DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test' }, stdio: ['ignore', logFd, logFd] });
   let up = false;
   for (let i = 0; i < 80; i++) { try { const r = await fetch(BASE + '/api/status'); if (r.ok) { up = true; break; } } catch { /* */ } await sleep(250); }
   if (!up) throw new Error('server did not boot:\n' + fs.readFileSync(LOG, 'utf8').slice(-2000));
@@ -73,7 +73,7 @@ test('(e) device_id looping is throttled per-device; another device on the same 
 
 // #155/#161 self-update kill switch
 test('per-device OTA off (devices.ota_enabled=0) -> never offered (reason ota_disabled_device); an enabled device still is', async () => {
-  const Database = require('better-sqlite3');
+  const Database = require('libsql');
   const db = new Database(path.join(DATA_DIR, 'db', 'remote_display.db'), { timeout: 5000 });
   db.prepare('INSERT INTO devices (id, ota_enabled) VALUES (?, 0)').run('ota-off-dev');
   db.prepare('INSERT INTO devices (id, ota_enabled) VALUES (?, 1)').run('ota-on-dev');
@@ -90,7 +90,7 @@ test('global OTA off (OTA_ENABLED=false) -> no device is offered (reason ota_dis
   const DD2 = path.join(os.tmpdir(), 'st-ota2-' + crypto.randomBytes(4).toString('hex'));
   fs.mkdirSync(DD2, { recursive: true });
   fs.writeFileSync(path.join(DD2, 'ScreenTinker.apk'), Buffer.alloc(1024, 1));
-  const p2 = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, DATA_DIR: DD2, SELF_HOSTED: 'true', PORT: String(P2), NODE_ENV: 'test', OTA_ENABLED: 'false' }, stdio: 'ignore' });
+  const p2 = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, BUNNY_DATABASE_URL: '', BUNNY_DATABASE_AUTH_TOKEN: '', DATA_DIR: DD2, SELF_HOSTED: 'true', PORT: String(P2), NODE_ENV: 'test', OTA_ENABLED: 'false' }, stdio: 'ignore' });
   try {
     let up = false;
     for (let i = 0; i < 80; i++) { try { const r = await fetch(`http://127.0.0.1:${P2}/api/status`); if (r.ok) { up = true; break; } } catch { /* */ } await sleep(250); }

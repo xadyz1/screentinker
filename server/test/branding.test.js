@@ -6,7 +6,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const Database = require('better-sqlite3');
+const Database = require('libsql');
 
 process.env.JWT_SECRET = 'test-secret-branding';
 
@@ -20,7 +20,7 @@ db.exec(`
     must_change_password INTEGER NOT NULL DEFAULT 0
   );
   CREATE TABLE white_labels (
-    id TEXT PRIMARY KEY, user_id TEXT, brand_name TEXT NOT NULL DEFAULT 'ScreenTinker',
+    id TEXT PRIMARY KEY, user_id TEXT, brand_name TEXT NOT NULL DEFAULT 'SwiftDisplay',
     logo_url TEXT, favicon_url TEXT, primary_color TEXT DEFAULT '#e65c00',
     secondary_color TEXT DEFAULT '#1E293B', bg_color TEXT DEFAULT '#111827',
     custom_domain TEXT, custom_css TEXT, hide_branding INTEGER DEFAULT 0,
@@ -74,14 +74,14 @@ test('resolver order: workspace row > domain > platform default > hardcoded', ()
   assert.equal(resolveBranding(db, {}).brand_name, 'Global Default', 'no context -> platform default');
 
   db.prepare("DELETE FROM white_labels WHERE id='platform-default'").run();
-  assert.equal(resolveBranding(db, {}).brand_name, 'ScreenTinker', 'no platform default -> hardcoded (legacy null-ws row not used)');
+  assert.equal(resolveBranding(db, {}).brand_name, 'SwiftDisplay', 'no platform default -> hardcoded (legacy null-ws row not used)');
 });
 
 test('GET /api/admin/branding returns hardcoded default when none set', async () => {
   db.prepare('DELETE FROM white_labels').run();
   const res = await fetch(base + '/api/admin/branding', { headers: { Authorization: `Bearer ${tokens.admin}` } });
   assert.equal(res.status, 200);
-  assert.equal((await res.json()).brand_name, 'ScreenTinker');
+  assert.equal((await res.json()).brand_name, 'SwiftDisplay');
 });
 
 test('PUT /api/admin/branding creates then updates the single platform-default row', async () => {

@@ -23,7 +23,7 @@ let db;
 try {
   db = new Database(config.dbPath, dbOptions);
   if (dbOptions.syncUrl) {
-    db.sync(); // Initial sync
+    console.log("Before sync"); db.sync(); console.log("After sync");
   }
 } catch (e) {
   if (e.message && e.message.includes('malformed')) {

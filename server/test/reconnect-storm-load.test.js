@@ -26,7 +26,7 @@ const os = require('node:os');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const ioClient = require('socket.io-client');
-const Database = require('better-sqlite3');
+const Database = require('libsql');
 
 const { freePort } = require('./helpers/free-port');
 let PORT;   // must be unique across the suite (files run concurrently under `node --test`)
@@ -44,7 +44,7 @@ before(async () => {
   proc = spawn('node', ['server.js'], {
     cwd: path.join(__dirname, '..'),
     env: {
-      ...process.env, DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test',
+      ...process.env, BUNNY_DATABASE_URL: '', BUNNY_DATABASE_AUTH_TOKEN: '', DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test',
       HEARTBEAT_TIMEOUT: '1500', HEARTBEAT_INTERVAL: '500',
       STATUS_LOG_FLUSH_MS: '300',
       RECONNECT_HARD_CEILING: '8', RECONNECT_WINDOW_MS: '5000', RECONNECT_BASE_MAX: '3',

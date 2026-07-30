@@ -8,7 +8,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const Database = require('better-sqlite3');
+const Database = require('libsql');
 const { authenticator } = require('otplib');
 
 // Inject the db BEFORE requiring middleware/auth so requireAuth queries this one.

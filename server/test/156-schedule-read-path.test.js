@@ -66,7 +66,7 @@ before(async () => {
   const logFd = fs.openSync(LOG, 'w');
   proc = spawn('node', ['server.js'], {
     cwd: path.join(__dirname, '..'),
-    env: { ...process.env, DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test' },
+    env: { ...process.env, BUNNY_DATABASE_URL: '', BUNNY_DATABASE_AUTH_TOKEN: '', DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test' },
     stdio: ['ignore', logFd, logFd],
   });
   let up = false;
@@ -108,7 +108,7 @@ test('GET /:id attaches schedules to each item (render path)', async () => {
 
   // Write a schedule straight to the table (a second WAL connection; the server sees it),
   // proving the READ path independent of the write route.
-  const sdb = new (require('better-sqlite3'))(S.dbPath, { timeout: 5000 });
+  const sdb = new (require('libsql'))(S.dbPath, { timeout: 5000 });
   sdb.prepare(
     'INSERT INTO playlist_item_schedules (id, playlist_item_id, active_days, start_time, end_time, start_date, end_date, sort_order) VALUES (?,?,?,?,?,?,?,?)'
   ).run(crypto.randomUUID(), itemId, '1,2,3', '09:00', '17:00', null, null, 0);
