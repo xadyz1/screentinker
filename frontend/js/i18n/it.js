@@ -1048,7 +1048,7 @@ export default {
   'billing.unlimited': 'Illimitato',
   'billing.free': 'Gratis',
   'billing.per_month': '/mese',
-  'billing.yearly_save': 'o ${price}/anno (risparmia il {pct}%)',
+  'billing.yearly_save': 'o €{price}/anno (risparmia il {pct}%)',
   'billing.monthly': 'Mensile',
   'billing.yearly': 'Annuale',
   'billing.manage_subscription': 'Gestisci Abbonamento',

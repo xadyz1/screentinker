@@ -535,6 +535,51 @@
       margin-bottom: 20px;
     }
 
+    /* Toggle Switch */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 50px;
+      height: 24px;
+    }
+    .switch input { 
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #444;
+      transition: .4s;
+    }
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .4s;
+    }
+    input:checked + .slider {
+      background-color: var(--accent);
+    }
+    input:checked + .slider:before {
+      transform: translateX(26px);
+    }
+    .slider.round {
+      border-radius: 24px;
+    }
+    .slider.round:before {
+      border-radius: 50%;
+    }
+
     .modern-price-card ul {
       list-style: none;
       padding: 0;
@@ -1100,17 +1145,26 @@
     </section>
 
     <!-- Pricing -->
-    <section class="pricing-section" id="pricing">
+    <section class="pricing-section pricing" id="pricing">
       <h2>Simple, Honest Pricing</h2>
       <p class="subtitle">All plans include remote control, monitoring, and unlimited content</p>
+      
+      <div style="display:flex; justify-content:center; align-items:center; gap:12px; margin-bottom:32px;">
+        <span style="color:var(--muted)">Monthly</span>
+        <label class="switch">
+          <input type="checkbox" id="billingToggle">
+          <span class="slider round"></span>
+        </label>
+        <span style="color:var(--text); font-weight:bold;">Annually (Save 20%)</span>
+      </div>
       
       <div class="pricing-cards">
         
         <!-- Start Card -->
         <div class="modern-price-card">
           <h3>Start</h3>
-          <div class="price">&euro;15.99<span>/mo</span></div>
-          <div class="billing-cycle">Billed monthly</div>
+          <div class="price" id="priceStart"><span style="font-family:sans-serif;">&euro;</span>15.99<span>/mo</span></div>
+          <div class="billing-cycle" id="cycleStart">Billed monthly</div>
           <ul>
             <li>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
@@ -1131,8 +1185,8 @@
         <!-- Pro Card -->
         <div class="modern-price-card featured">
           <h3>Pro</h3>
-          <div class="price">&euro;25.99<span>/mo</span></div>
-          <div class="billing-cycle">Billed monthly</div>
+          <div class="price" id="pricePro"><span style="font-family:sans-serif;">&euro;</span>25.99<span>/mo</span></div>
+          <div class="billing-cycle" id="cyclePro">Billed monthly</div>
           <ul>
             <li>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
@@ -1599,6 +1653,24 @@
       }
     });
   </script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const toggle = document.getElementById('billingToggle');
+      if (toggle) {
+        toggle.addEventListener('change', (e) => {
+          const isAnnual = e.target.checked;
+          document.getElementById('priceStart').innerHTML = isAnnual 
+            ? '<span style="font-family:sans-serif;">&euro;</span>150.99<span>/yr</span>' 
+            : '<span style="font-family:sans-serif;">&euro;</span>15.99<span>/mo</span>';
+          document.getElementById('cycleStart').textContent = isAnnual ? 'Billed annually' : 'Billed monthly';
+          
+          document.getElementById('pricePro').innerHTML = isAnnual 
+            ? '<span style="font-family:sans-serif;">&euro;</span>250.99<span>/yr</span>' 
+            : '<span style="font-family:sans-serif;">&euro;</span>25.99<span>/mo</span>';
+          document.getElementById('cyclePro').textContent = isAnnual ? 'Billed annually' : 'Billed monthly';
+        });
+      }
+    });
+  </script>
 </body>
-
 </html>

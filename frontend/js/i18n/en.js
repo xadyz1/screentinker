@@ -1419,7 +1419,7 @@ export default {
   'billing.unlimited': 'Unlimited',
   'billing.free': 'Free',
   'billing.per_month': '/mo',
-  'billing.yearly_save': 'or ${price}/year (save {pct}%)',
+  'billing.yearly_save': 'or €{price}/year (save {pct}%)',
   'billing.monthly': 'Monthly',
   'billing.yearly': 'Yearly',
   'billing.manage_subscription': 'Manage Subscription',

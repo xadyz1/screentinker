@@ -382,6 +382,7 @@ function renderPropertySlide(config) {
 <html>
 <head>
 <meta charset="utf-8">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <style>
   body { margin:0; overflow:hidden; background:#111; color:#fff; font-family:sans-serif; }
   .slide { position:absolute; inset:0; display:flex; flex-direction:column; opacity:0; pointer-events:none; }
@@ -416,7 +417,7 @@ function renderPropertySlide(config) {
       <div class="bg-container" id="bgc${i}">
         ${imgs.length > 0 
           ? imgs.map((img, j) => `<div class="bg-img ${j===0?'active':''}" id="img-${i}-${j}" style="background-image:url('${escapeHtml(img)}')"></div>`).join('') 
-          : `<div class="empty-bg"><span style="font-size:8vw;margin-bottom:2vw;">🏠</span>Sem foto</div>`
+          : `<div class="empty-bg"><i class="fas fa-home" style="font-size:8vw;margin-bottom:2vw;"></i>Sem foto</div>`
         }
       </div>
       <div class="content">
@@ -424,8 +425,8 @@ function renderPropertySlide(config) {
         <div class="title">${escapeHtml(p.title || '')}</div>
         <div class="details">
           ${p.price ? `<div class="price">${escapeHtml(p.price)}</div>` : ''}
-          ${p.bedrooms ? `<div class="meta">🛏️ ${escapeHtml(p.bedrooms)}</div>` : ''}
-          ${p.area_m2 ? `<div class="meta">📏 ${escapeHtml(p.area_m2)} m²</div>` : ''}
+          ${p.bedrooms ? `<div class="meta"><i class="fas fa-bed"></i> ${escapeHtml(p.bedrooms)}</div>` : ''}
+          ${p.area_m2 ? `<div class="meta"><i class="fas fa-ruler-combined"></i> ${escapeHtml(p.area_m2)} m²</div>` : ''}
         </div>
       </div>
     </div>
