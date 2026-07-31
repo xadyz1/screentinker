@@ -340,14 +340,15 @@ h6,
   font-weight: 600;
 }
 
-html, body {
+html,
+body {
   margin: 0;
   padding: 0;
   background: var(--bg-base);
   color: var(--text-primary);
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   min-height: 100vh;
-  display: flex;
+
   font-size: 14px;
   line-height: 1.5;
   overflow-x: hidden;
@@ -579,13 +580,14 @@ html, body {
   margin-left: var(--sidebar-width);
   flex: 1;
   height: 100vh;
-  overflow-y: auto;
+  overflow-y: hidden;
+  width: 100vh;
   padding: 24px 32px;
 }
 
 /* Constrain content width on ultra-wide screens */
 @media (min-width: 1400px) {
-  .content > * {
+  .content>* {
     max-width: 1200px;
     margin-left: auto !important;
     margin-right: auto !important;
@@ -2113,18 +2115,22 @@ html, body {
     grid-template-columns: 1fr 1fr;
   }
 }
+
 /* Editor Specifics & Moveable.js Overrides */
 .template-editor {
   --editor-primary: #f97316;
   --editor-bg: #e2e8f0;
 }
+
 .moveable-control-box {
   z-index: 9999 !important;
 }
+
 .moveable-line {
   background: var(--editor-primary) !important;
   width: 2px !important;
 }
+
 .moveable-control {
   background: white !important;
   border: 2px solid var(--editor-primary) !important;
@@ -2133,15 +2139,27 @@ html, body {
   margin-left: -6px !important;
   margin-top: -6px !important;
   border-radius: 50% !important;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.2) !important;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2) !important;
 }
+
 .drag-preset:hover {
   border-color: var(--editor-primary) !important;
   color: var(--editor-primary);
 }
+
 .drag-preset svg {
   transition: stroke 0.2s;
 }
+
 .drag-preset:hover svg {
   stroke: var(--editor-primary);
+}
+/* Login page wrapper */
+.login-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 16px;
+  background: var(--bg-primary);
 }

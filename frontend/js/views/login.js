@@ -49,16 +49,14 @@ export async function render(container) {
   applyLoginBrandingDoc(branding);
   const brandName = branding.brand_name || 'SwiftDisplay';
   // Branded logo if set, else the default SwiftDisplay glyph.
+  const theme = document.documentElement.getAttribute('data-theme') || 'dark';
+  const defaultLogo = theme === 'light' ? '/assets/logoswift.png' : '/assets/logowhiteswift.png';
   const logoHtml = branding.logo_url
     ? `<img src="${brandEsc(branding.logo_url)}" alt="${brandEsc(brandName)}" style="max-height:48px;max-width:200px;margin:0 auto 12px;display:block">`
-    : `<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="margin:0 auto 12px">
-            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-            <line x1="8" y1="21" x2="16" y2="21"/>
-            <line x1="12" y1="17" x2="12" y2="21"/>
-          </svg>`;
+    : `<img src="${defaultLogo}" alt="${brandEsc(brandName)}" style="max-height:48px;max-width:200px;margin:0 auto 12px;display:block">`;
 
   container.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:16px">
+    <div class="login-wrapper">
       <div style="width:400px;max-width:100%">
         <div style="text-align:center;margin-bottom:32px">
           ${logoHtml}
