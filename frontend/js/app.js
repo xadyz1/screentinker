@@ -37,14 +37,25 @@ let currentView = null;
 // ==================== Theme Initialization ====================
 function updateDashboardThemeIcon() {
   const themeIcon = document.getElementById('dashboard-theme-icon');
-  if (!themeIcon) return;
+  const mainLogo = document.getElementById('main-logo');
   const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+  
   if (currentTheme === 'light') {
-    themeIcon.classList.remove('fa-moon');
-    themeIcon.classList.add('fa-sun');
+    if (themeIcon) {
+      themeIcon.classList.remove('fa-moon');
+      themeIcon.classList.add('fa-sun');
+    }
+    if (mainLogo) {
+      mainLogo.src = '/assets/logoswift.png';
+    }
   } else {
-    themeIcon.classList.remove('fa-sun');
-    themeIcon.classList.add('fa-moon');
+    if (themeIcon) {
+      themeIcon.classList.remove('fa-sun');
+      themeIcon.classList.add('fa-moon');
+    }
+    if (mainLogo) {
+      mainLogo.src = '/assets/logowhiteswift.png';
+    }
   }
 }
 
