@@ -308,9 +308,9 @@ async function renderEditor(container, layoutId) {
       showToast(t('layout.toast.saved'), 'success');
 
       if (layout.affected_playlists > 0) {
-        if (confirm(t('layout.confirm_republish_affected') || \`Este layout é usado por \${layout.affected_playlists} playlist(s) publicada(s). Guardar as alterações de zona pode desalinhar as zonas já atribuídas.\\n\\nDeseja republicar estas playlists agora para que as alterações reflitam imediatamente? (Poderá gerar itens órfãos visíveis no dashboard dos dispositivos).\`)) {
+        if (confirm(t('layout.confirm_republish_affected') || `Este layout é usado por ${layout.affected_playlists} playlist(s) publicada(s). Guardar as alterações de zona pode desalinhar as zonas já atribuídas.\n\nDeseja republicar estas playlists agora para que as alterações reflitam imediatamente? (Poderá gerar itens órfãos visíveis no dashboard dos dispositivos).`)) {
           try {
-            await API(\`/layouts/\${layoutId}/republish-affected\`, { method: 'POST' });
+            await API(`/layouts/${layoutId}/republish-affected`, { method: 'POST' });
             showToast(t('layout.toast.republished_affected') || 'Playlists republicadas!', 'success');
           } catch (e) {
             showToast(e.message || 'Erro ao republicar playlists', 'error');
