@@ -613,7 +613,13 @@ VALUES
   ('tpl-rt-1', 'rollover-text', 'Avisos da Loja', 'general', 'Avisos rotativos com fundo dinâmico.', 
     '{"messages":["Bem-vindos à nossa loja!","Horário: Segunda a Sábado, 9h - 19h","Aproveite as promoções de Inverno!"],"duration_sec":6,"transition":"fade","font_size":"5","text_color":"#ffffff","bg_color":"#1f2937"}', 6),
   ('tpl-rt-2', 'rollover-text', 'Boas-vindas', 'general', 'Mensagens centrais grandes e limpas.', 
-    '{"messages":["BEM-VINDO!","Sinta-se em casa."],"duration_sec":8,"transition":"slide","font_size":"8","text_color":"#111827","bg_color":"#f3f4f6"}', 7);
+    '{"messages":["BEM-VINDO!","Sinta-se em casa."],"duration_sec":8,"transition":"slide","font_size":"8","text_color":"#111827","bg_color":"#f3f4f6"}', 7),
+  ('tpl-mc-1', 'modern-clock', 'Relógio Escuro', 'general', 'Relógio moderno com fundo escuro.', 
+    '{"mode":"24h","tz":"Europe/Lisbon","theme":"dark","color":"#7aa2ff"}', 8),
+  ('tpl-tq-1', 'ticket-queue', 'Fila Única', 'general', 'Gestão de filas simples.', 
+    '{"counterName":"Balcão 1","color":"#e53935","soundEnabled":true,"currentTicket":"000","lastCalled":[]}', 9),
+  ('tpl-bi-1', 'bi-dashboard', 'Vendas Diárias', 'dashboard', 'Dashboard simples de vendas.', 
+    '{"metrics":[{"title":"Vendas Hoje","value":"€4.250","change":"+12%"},{"title":"Visitas","value":"1.432","change":"+5%"},{"title":"Conversão","value":"3.2%","change":"-1.1%"}]}', 10);
 
 -- ===================== SCHEMA MIGRATIONS =====================
 

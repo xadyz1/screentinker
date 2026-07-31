@@ -49,7 +49,7 @@ function ensureDefaultOrgForUser(user, { allowCreate = true } = {}) {
       user.subscription_status || 'active', user.subscription_ends || null
     );
     db.prepare(`INSERT INTO organization_members (organization_id, user_id, role) VALUES (?, ?, 'org_owner')`).run(orgId, user.id);
-    db.prepare(`INSERT INTO workspaces (id, organization_id, name, created_by) VALUES (?, ?, 'Default', ?)`).run(wsId, orgId, user.id);
+    db.prepare(`INSERT INTO workspaces (id, organization_id, name, slug, created_by) VALUES (?, ?, 'Default', 'default', ?)`).run(wsId, orgId, user.id);
     db.prepare(`INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (?, ?, 'workspace_admin')`).run(wsId, user.id);
   });
   tx();
@@ -485,7 +485,7 @@ router.get('/me', requireAuth, resolveTenancy, (req, res) => {
   const isPlatformAdmin = isPlatformRole(req.user.role);
   const accessible = isPlatformStaffUser
     ? db.prepare(`
-        SELECT w.id, w.name, w.organization_id, o.name AS organization_name,
+        SELECT w.id, w.name, w.slug, w.organization_id, o.name AS organization_name,
                wm.role AS workspace_role, om.role AS org_role,
                (SELECT COUNT(*) FROM devices WHERE workspace_id = w.id) AS device_count
         FROM workspaces w
@@ -495,7 +495,7 @@ router.get('/me', requireAuth, resolveTenancy, (req, res) => {
         ORDER BY o.name, w.name
       `).all(req.user.id, req.user.id)
     : db.prepare(`
-        SELECT w.id, w.name, w.organization_id, o.name AS organization_name,
+        SELECT w.id, w.name, w.slug, w.organization_id, o.name AS organization_name,
                wm.role AS workspace_role, om.role AS org_role,
                (SELECT COUNT(*) FROM devices WHERE workspace_id = w.id) AS device_count
         FROM workspaces w

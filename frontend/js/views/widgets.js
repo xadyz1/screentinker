@@ -358,6 +358,7 @@ export async function render(container) {
   let rolloverState = { messages: [] };
   let menuState = { sections: [] };
   let propertyState = { properties: [] };
+  let biState = { metrics: [] };
   // Cached widget list from the last load — used to populate the directory-search
   // source-board dropdown without a second fetch.
   let loadedWidgets = [];
@@ -552,6 +553,46 @@ export async function render(container) {
           <div class="form-group"><label>Propriedades</label><div id="wPropBox"></div></div>
         `;
         break;
+      case 'modern-clock':
+        html += `
+          <div class="form-group" style="display:flex;gap:12px;flex-wrap:wrap">
+            <div style="flex:1;min-width:140px"><label>Modo</label><select id="wClockMode" class="input" style="background:var(--bg-input)">
+              <option value="12h" ${config.mode !== '24h' ? 'selected' : ''}>12 Horas (AM/PM)</option>
+              <option value="24h" ${config.mode === '24h' ? 'selected' : ''}>24 Horas</option>
+            </select></div>
+            <div style="flex:1;min-width:140px"><label>Fuso Horário</label><input type="text" id="wClockTz" class="input" value="${escAttr(config.tz || 'UTC')}" placeholder="Europe/Lisbon"></div>
+          </div>
+          <div class="form-group" style="display:flex;gap:12px;flex-wrap:wrap">
+            <div style="flex:1;min-width:140px"><label>Tema</label><select id="wClockTheme" class="input" style="background:var(--bg-input)">
+              <option value="dark" ${config.theme !== 'light' ? 'selected' : ''}>Escuro</option>
+              <option value="light" ${config.theme === 'light' ? 'selected' : ''}>Claro</option>
+            </select></div>
+            <div style="flex:1;min-width:140px"><label>Cor de Destaque</label><input type="color" id="wClockColor" value="${config.color || '#7aa2ff'}" style="width:100%;height:32px;border:none;background:none;padding:0"></div>
+          </div>
+        `;
+        break;
+      case 'ticket-queue':
+        html += `
+          <div class="form-group" style="display:flex;gap:12px;flex-wrap:wrap">
+            <div style="flex:1;min-width:140px"><label>Nome do Balcão</label><input type="text" id="wTicketCounter" class="input" value="${escAttr(config.counterName || 'Balcão 1')}"></div>
+            <div style="flex:1;min-width:140px"><label>Cor Principal</label><input type="color" id="wTicketColor" value="${config.color || '#e53935'}" style="width:100%;height:32px;border:none;background:none;padding:0"></div>
+          </div>
+          <div class="form-group">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" id="wTicketSound" ${config.soundEnabled ? 'checked' : ''}> Som de Notificação
+            </label>
+          </div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:8px">
+            Nota: As senhas são incrementadas através de pedidos POST para a API do widget (<code>/api/widgets/:id/ticket-queue/call</code>).
+          </div>
+        `;
+        break;
+      case 'bi-dashboard':
+        biState.metrics = Array.isArray(config.metrics) ? JSON.parse(JSON.stringify(config.metrics)) : [];
+        html += `
+          <div class="form-group"><label>Métricas</label><div id="wBiBox"></div><button type="button" class="btn btn-secondary btn-sm" id="wBiAddBtn" style="margin-top:8px">+ Adicionar Métrica</button></div>
+        `;
+        break;
 
       case 'directory-search': {
         const boards = (loadedWidgets || []).filter(w => w.widget_type === 'directory-board');
@@ -643,6 +684,7 @@ export async function render(container) {
     if (type === 'rollover-text') renderRollover();
     if (type === 'daily-menu') renderMenu();
     if (type === 'property-slide') renderProperty();
+    if (type === 'bi-dashboard') renderBiMetrics();
   }
 
   // Live transition picker: a CHECKLIST of effects (pick one or several — the player randomizes among
@@ -1052,6 +1094,31 @@ export async function render(container) {
     document.querySelectorAll('.mn-item-price').forEach(i => i.oninput = (e) => { menuState.sections[+e.target.dataset.s].items[+e.target.dataset.i].price = e.target.value; });
   }
 
+  function renderBiMetrics() {
+    const box = document.getElementById('wBiBox');
+    const addBtn = document.getElementById('wBiAddBtn');
+    if (!box || !addBtn) return;
+    
+    box.innerHTML = biState.metrics.map((m, i) => `
+      <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center;">
+        <input type="text" class="input bi-title" data-idx="${i}" value="${escAttr(m.title)}" placeholder="Título (ex: Receita)" style="flex:2">
+        <input type="text" class="input bi-val" data-idx="${i}" value="${escAttr(m.value)}" placeholder="Valor (ex: €12.5K)" style="flex:2">
+        <input type="text" class="input bi-change" data-idx="${i}" value="${escAttr(m.change)}" placeholder="Var (ex: +5%)" style="flex:1">
+        <button type="button" class="btn btn-danger btn-sm bi-del" data-idx="${i}">X</button>
+      </div>
+    `).join('');
+    
+    document.querySelectorAll('.bi-title').forEach(i => i.oninput = (e) => { biState.metrics[+e.target.dataset.idx].title = e.target.value; });
+    document.querySelectorAll('.bi-val').forEach(i => i.oninput = (e) => { biState.metrics[+e.target.dataset.idx].value = e.target.value; });
+    document.querySelectorAll('.bi-change').forEach(i => i.oninput = (e) => { biState.metrics[+e.target.dataset.idx].change = e.target.value; });
+    document.querySelectorAll('.bi-del').forEach(b => b.onclick = (e) => { biState.metrics.splice(+e.target.dataset.idx, 1); renderBiMetrics(); });
+    
+    addBtn.onclick = () => {
+      biState.metrics.push({ title: '', value: '', change: '' });
+      renderBiMetrics();
+    };
+  }
+
   // Property slide renderers
   function renderProperty() {
     const box = document.getElementById('wPropBox');
@@ -1223,6 +1290,20 @@ export async function render(container) {
         align: val('wRoAlign'),
         text_color: val('wRoColor'),
         bg_color: val('wRoBg')
+      }); break;
+      case 'modern-clock': Object.assign(config, {
+        mode: val('wClockMode'),
+        tz: val('wClockTz'),
+        theme: val('wClockTheme'),
+        color: val('wClockColor')
+      }); break;
+      case 'ticket-queue': Object.assign(config, {
+        counterName: val('wTicketCounter'),
+        color: val('wTicketColor'),
+        soundEnabled: document.getElementById('wTicketSound')?.checked
+      }); break;
+      case 'bi-dashboard': Object.assign(config, {
+        metrics: biState.metrics.map(m => ({ title: m.title, value: m.value, change: m.change }))
       }); break;
       case 'daily-menu': Object.assign(config, {
         establishment_name: val('wMenuTitle'),

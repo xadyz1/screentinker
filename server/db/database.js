@@ -835,6 +835,57 @@ function backfillActivityLogWorkspace() {
 
 backfillActivityLogWorkspace();
 
+const WORKSPACE_SLUG_BACKFILL_ID = 'phase2_4_workspace_slug_backfill';
+
+function backfillWorkspaceSlugs() {
+  const already = db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get(WORKSPACE_SLUG_BACKFILL_ID);
+  if (already) return;
+
+  const hasWorkspaces = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='workspaces'"
+  ).get();
+  if (!hasWorkspaces) {
+    console.warn('backfillWorkspaceSlugs: workspaces table missing, skipping');
+    return;
+  }
+
+  const workspaces = db.prepare("SELECT id, name, organization_id FROM workspaces WHERE slug IS NULL OR slug = ''").all();
+  if (workspaces.length === 0) {
+    db.prepare('INSERT OR IGNORE INTO schema_migrations (id) VALUES (?)').run(WORKSPACE_SLUG_BACKFILL_ID);
+    return;
+  }
+
+  let count = 0;
+  db.transaction(() => {
+    for (const ws of workspaces) {
+      let baseSlug = (ws.name || 'default').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      if (!baseSlug) baseSlug = 'workspace';
+      
+      let slug = baseSlug;
+      let suffix = 1;
+      let isUnique = false;
+      
+      while (!isUnique) {
+        const existing = db.prepare('SELECT id FROM workspaces WHERE organization_id = ? AND slug = ? AND id != ?').get(ws.organization_id, slug, ws.id);
+        if (existing) {
+          suffix++;
+          slug = `${baseSlug}-${suffix}`;
+        } else {
+          isUnique = true;
+        }
+      }
+      
+      db.prepare('UPDATE workspaces SET slug = ? WHERE id = ?').run(slug, ws.id);
+      count++;
+    }
+    db.prepare('INSERT OR IGNORE INTO schema_migrations (id) VALUES (?)').run(WORKSPACE_SLUG_BACKFILL_ID);
+  })();
+  
+  if (count > 0) console.log(`backfillWorkspaceSlugs: generated slugs for ${count} workspace(s).`);
+}
+
+backfillWorkspaceSlugs();
+
 // Phase 2 zone_id backfill. Companion to the ADD COLUMN above. Attempts to
 // recover zone_id values for playlist_items rows by joining back to the
 // (legacy) assignments table on device+content/widget. On installs where

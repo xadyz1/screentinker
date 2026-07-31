@@ -124,7 +124,7 @@ router.post('/orgs', requirePlatformAdmin, (req, res) => {
       `INSERT INTO organizations (id, name, owner_user_id, plan_id, subscription_status) VALUES (?, ?, ?, 'free', 'active')`
     ).run(orgId, name, ownerId);
     db.prepare(`INSERT INTO organization_members (organization_id, user_id, role) VALUES (?, ?, 'org_owner')`).run(orgId, ownerId);
-    db.prepare(`INSERT INTO workspaces (id, organization_id, name, created_by) VALUES (?, ?, 'Default', ?)`).run(wsId, orgId, ownerId);
+    db.prepare(`INSERT INTO workspaces (id, organization_id, name, slug, created_by) VALUES (?, ?, 'Default', 'default', ?)`).run(wsId, orgId, ownerId);
     db.prepare(`INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (?, ?, 'workspace_admin')`).run(wsId, ownerId);
   });
   txn();

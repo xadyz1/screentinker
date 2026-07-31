@@ -190,6 +190,34 @@ router.put('/:id', (req, res) => {
   res.json(db.prepare('SELECT * FROM widgets WHERE id = ?').get(req.params.id));
 });
 
+// Call next ticket for ticket-queue
+router.post('/:id/ticket-queue/call', (req, res) => {
+  const widget = checkWidgetWrite(req, res);
+  if (!widget) return;
+  if (widget.widget_type !== 'ticket-queue') {
+    return res.status(400).json({ error: 'Widget is not a ticket-queue' });
+  }
+  
+  let config = {};
+  try { config = JSON.parse(widget.config); } catch (e) {}
+  
+  let current = parseInt(config.currentTicket) || 0;
+  current++;
+  const formatted = current.toString().padStart(3, '0');
+  
+  const lastCalled = Array.isArray(config.lastCalled) ? config.lastCalled : [];
+  if (config.currentTicket) {
+    lastCalled.unshift(config.currentTicket);
+    if (lastCalled.length > 3) lastCalled.pop();
+  }
+  
+  config.currentTicket = formatted;
+  config.lastCalled = lastCalled;
+  
+  db.prepare("UPDATE widgets SET config = ?, updated_at = strftime('%s','now') WHERE id = ?").run(JSON.stringify(config), req.params.id);
+  res.json({ success: true, currentTicket: formatted, lastCalled });
+});
+
 // Delete widget
 router.delete('/:id', (req, res) => {
   const widget = checkWidgetWrite(req, res);
@@ -198,7 +226,7 @@ router.delete('/:id', (req, res) => {
   res.json({ success: true });
 });
 
-const KNOWN_WIDGET_TYPES = new Set(['clock','weather','rss','text','webpage','social','directory-board','directory-search','diag-smoothness', 'crypto', 'world-clock', 'rollover-text', 'daily-menu', 'property-slide']);
+const KNOWN_WIDGET_TYPES = new Set(['clock','weather','rss','text','webpage','social','directory-board','directory-search','diag-smoothness', 'crypto', 'world-clock', 'rollover-text', 'daily-menu', 'property-slide', 'modern-clock', 'ticket-queue', 'bi-dashboard']);
 function renderWidgetHtml(type, config) {
   config = config || {};
   switch (type) {
@@ -218,6 +246,9 @@ function renderWidgetHtml(type, config) {
     case 'rollover-text': return renderRolloverText(config);
     case 'daily-menu': return renderDailyMenu(config);
     case 'property-slide': return renderPropertySlide(config);
+    case 'modern-clock': return renderModernClock(config);
+    case 'ticket-queue': return renderTicketQueue(config);
+    case 'bi-dashboard': return renderBiDashboard(config);
     default: return '<html><body style="color:white;background:black;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><h1>Unknown widget</h1></body></html>';
   }
 }
@@ -1576,4 +1607,113 @@ function renderWorldClock() {
     updateClocks(); setInterval(updateClocks, 1000);
   </script>
 </body></html>`;
+}
+
+function renderModernClock(config) {
+  const is24h = config.mode === '24h';
+  const tz = safeTimezone(config.tz) || 'UTC';
+  const theme = config.theme === 'light' ? 'light' : 'dark';
+  const color = safeCss(config.color, '#7aa2ff');
+  
+  const bg = theme === 'light' ? '#ffffff' : '#090c12';
+  const text = theme === 'light' ? '#111' : '#eef3ff';
+  
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; background: ${bg}; color: ${text}; font-family: Inter, system-ui, sans-serif; display: flex; align-items: center; justify-content: center; flex-direction: column; }
+    .time { font-size: 15vw; font-weight: 800; line-height: 1; letter-spacing: -0.05em; color: ${escapeHtml(color)}; }
+    .date { font-size: 3vw; font-weight: 500; opacity: 0.8; margin-top: 2vh; }
+  </style>
+</head>
+<body>
+  <div class="time" id="time">--:--</div>
+  <div class="date" id="date">---</div>
+  <script>
+    function update() {
+      const now = new Date();
+      document.getElementById('time').textContent = now.toLocaleTimeString('en-US', { timeZone: '${escapeHtml(tz)}', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: ${!is24h} });
+      document.getElementById('date').textContent = new Intl.DateTimeFormat('en-US', { timeZone: '${escapeHtml(tz)}', weekday: 'long', month: 'long', day: 'numeric' }).format(now);
+    }
+    update(); setInterval(update, 1000);
+  </script>
+</body>
+</html>`;
+}
+
+function renderTicketQueue(config) {
+  const current = config.currentTicket || '000';
+  const lastCalled = Array.isArray(config.lastCalled) ? config.lastCalled : [];
+  const counter = config.counterName || 'Balcão 1';
+  const color = safeCss(config.color, '#e53935');
+  
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; background: #000; color: #fff; font-family: system-ui, sans-serif; display: flex; }
+    .left { flex: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; background: ${escapeHtml(color)}; }
+    .right { flex: 1; display: flex; flex-direction: column; background: #111; border-left: 5px solid #222; }
+    .title { font-size: 4vw; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.9; }
+    .ticket { font-size: 20vw; font-weight: 900; line-height: 1; margin: 2vh 0; }
+    .counter { font-size: 5vw; font-weight: bold; }
+    .history-title { padding: 3vh; font-size: 3vw; background: #222; text-align: center; font-weight: bold; }
+    .history-list { flex: 1; display: flex; flex-direction: column; }
+    .history-item { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 6vw; font-weight: bold; border-bottom: 2px solid #222; }
+  </style>
+</head>
+<body>
+  <div class="left">
+    <div class="title">Senha Atual</div>
+    <div class="ticket">${escapeHtml(String(current))}</div>
+    <div class="counter">${escapeHtml(counter)}</div>
+  </div>
+  <div class="right">
+    <div class="history-title">Últimas Chamadas</div>
+    <div class="history-list">
+      \${lastCalled.map(t => \`<div class="history-item">\${escapeHtml(String(t))}</div>\`).join('')}
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+function renderBiDashboard(config) {
+  const metrics = Array.isArray(config.metrics) ? config.metrics : [];
+  
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; background: #f4f6f8; color: #333; font-family: system-ui, sans-serif; box-sizing: border-box; padding: 4vw; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 3vw; height: 100%; align-items: start; }
+    .card { background: #fff; border-radius: 12px; padding: 3vw; box-shadow: 0 4px 12px rgba(0,0,0,0.05); display: flex; flex-direction: column; }
+    .title { font-size: 2vw; color: #666; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; }
+    .value { font-size: 5vw; font-weight: 800; margin: 1vw 0; color: #111; }
+    .change { font-size: 1.5vw; font-weight: bold; }
+    .change.up { color: #2e7d32; }
+    .change.down { color: #c62828; }
+  </style>
+</head>
+<body>
+  <div class="grid">
+    \${metrics.map(m => {
+      const isUp = String(m.change).startsWith('+');
+      const isDown = String(m.change).startsWith('-');
+      const cClass = isUp ? 'up' : (isDown ? 'down' : '');
+      return \`
+      <div class="card">
+        <div class="title">\${escapeHtml(m.title)}</div>
+        <div class="value">\${escapeHtml(m.value)}</div>
+        <div class="change \${cClass}">\${escapeHtml(m.change)}</div>
+      </div>
+      \`;
+    }).join('')}
+  </div>
+</body>
+</html>`;
 }
