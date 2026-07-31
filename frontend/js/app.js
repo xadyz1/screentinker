@@ -435,7 +435,7 @@ function route() {
     kiosk.render(app);
   } else if (hash === '#/tickets') {
     currentView = tickets;
-    tickets.renderTickets();
+    tickets.render(app);
   } else if (hash === '#/designer' || hash.startsWith('#/designer/')) {
     currentView = designer;
     // #/designer/<widgetId> reopens a designer-made widget for editing; #/designer starts fresh.

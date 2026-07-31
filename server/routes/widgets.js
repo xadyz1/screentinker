@@ -1896,17 +1896,17 @@ function renderBiDashboard(config) {
 </head>
 <body>
   <div class="grid">
-    \${metrics.map(m => {
+    ${metrics.map(m => {
       const isUp = String(m.change).startsWith('+');
       const isDown = String(m.change).startsWith('-');
       const cClass = isUp ? 'up' : (isDown ? 'down' : '');
-      return \`
+      return `
       <div class="card">
-        <div class="title">\${escapeHtml(m.title)}</div>
-        <div class="value">\${escapeHtml(m.value)}</div>
-        <div class="change \${cClass}">\${escapeHtml(m.change)}</div>
+        <div class="title">${escapeHtml(m.title)}</div>
+        <div class="value">${escapeHtml(m.value)}</div>
+        <div class="change ${cClass}">${escapeHtml(m.change)}</div>
       </div>
-      \`;
+      `;
     }).join('')}
   </div>
 </body>

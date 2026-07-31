@@ -1,7 +1,6 @@
 import { api } from '../api.js';
 
-export async function renderTickets() {
-  const root = document.getElementById('mainContent');
+export async function render(root) {
   root.innerHTML = `
     <div class="content-header">
       <div>
