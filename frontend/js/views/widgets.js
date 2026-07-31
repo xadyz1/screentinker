@@ -368,10 +368,21 @@ export async function render(container) {
   };
 
   container.querySelectorAll('[data-create-type]').forEach(el => {
-    el.onclick = () => {
+    el.onclick = async () => {
       creatingType = el.dataset.createType;
       editingWidget = null;
       document.getElementById('widgetTypeGrid').style.display = 'none';
+      
+      try {
+        const templates = await API(`/widgets/widget-templates?type=${creatingType}`);
+        if (templates && templates.length > 0) {
+          showTemplateGallery(creatingType, templates);
+          return;
+        }
+      } catch (e) {
+        console.error('Failed to fetch widget templates', e);
+      }
+      
       showConfigForm(creatingType, {});
     };
   });
@@ -506,8 +517,19 @@ export async function render(container) {
         break;
       case 'daily-menu':
         menuState.sections = Array.isArray(config.sections) ? JSON.parse(JSON.stringify(config.sections)) : [];
+        menuState.logo_url = config.logo_url || '';
         html += `
-          <div class="form-group"><label>Nome do estabelecimento</label><input type="text" id="wMenuTitle" class="input" value="${escAttr(config.establishment_name || '')}" placeholder="Café Central"></div>
+          <div class="form-group" style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
+            <div style="flex:1;min-width:140px"><label>Nome do estabelecimento</label><input type="text" id="wMenuTitle" class="input" value="${escAttr(config.establishment_name || '')}" placeholder="Café Central"></div>
+            <div style="flex:1;min-width:140px">
+              <label>Logotipo (Opcional)</label>
+              <div style="display:flex;gap:8px;align-items:center">
+                <img id="wMenuLogoPreview" src="${escAttr(menuState.logo_url)}" style="width:40px;height:40px;object-fit:contain;background:var(--bg-input);border-radius:4px;display:${menuState.logo_url ? 'block' : 'none'}">
+                <button type="button" class="btn btn-secondary btn-sm" id="wMenuLogoBtn">Escolher Imagem</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="wMenuLogoClear" style="display:${menuState.logo_url ? 'block' : 'none'}">Limpar</button>
+              </div>
+            </div>
+          </div>
           <div class="form-group" style="max-width:200px">
             <label>Moeda</label>
             <select id="wMenuCurr" class="input" style="background:var(--bg-input)">
@@ -972,6 +994,8 @@ export async function render(container) {
         <div>
           ${(sec.items||[]).map((item, j) => `
             <div style="display:flex;gap:8px;margin-bottom:8px;align-items:flex-start">
+              <img ${item.image_url ? `src="${escAttr(item.image_url)}"` : ''} style="width:36px;height:36px;object-fit:cover;border-radius:4px;background:var(--bg-input);display:${item.image_url ? 'block' : 'none'}">
+              <button type="button" class="btn btn-secondary btn-sm mn-item-img-btn" data-s="${i}" data-i="${j}" style="padding:0 6px;height:36px" title="Adicionar Foto">📷</button>
               <div style="flex:1">
                 <input type="text" class="input mn-item-name" data-s="${i}" data-i="${j}" value="${escAttr(item.name)}" placeholder="Item name" style="margin-bottom:4px;font-size:12px">
                 <input type="text" class="input mn-item-desc" data-s="${i}" data-i="${j}" value="${escAttr(item.description)}" placeholder="Description" style="font-size:11px">
@@ -985,15 +1009,43 @@ export async function render(container) {
       </div>
     `).join('') + `<button type="button" class="btn btn-secondary btn-sm" id="mnSecAdd">+ Add Section</button>`;
     
+    // Bind logic for menu logo
+    const menuLogoBtn = document.getElementById('wMenuLogoBtn');
+    if (menuLogoBtn) {
+      menuLogoBtn.onclick = async () => {
+        const url = await openContentPicker({ multiple: false, title: 'Select Logo' });
+        if (url) {
+          menuState.logo_url = url;
+          document.getElementById('wMenuLogoPreview').src = url;
+          document.getElementById('wMenuLogoPreview').style.display = 'block';
+          document.getElementById('wMenuLogoClear').style.display = 'block';
+        }
+      };
+      document.getElementById('wMenuLogoClear').onclick = () => {
+        menuState.logo_url = '';
+        document.getElementById('wMenuLogoPreview').style.display = 'none';
+        document.getElementById('wMenuLogoClear').style.display = 'none';
+      };
+    }
+    
     document.querySelectorAll('.mn-sec-inp').forEach(i => i.oninput = (e) => { menuState.sections[+e.target.dataset.idx].title = e.target.value; });
     document.querySelectorAll('.mn-sec-del').forEach(b => b.onclick = (e) => { menuState.sections.splice(+e.target.dataset.idx, 1); renderMenu(); });
     document.getElementById('mnSecAdd').onclick = () => { menuState.sections.push({title:'', items:[]}); renderMenu(); };
     
     document.querySelectorAll('.mn-item-add').forEach(b => b.onclick = (e) => {
-      menuState.sections[+e.target.dataset.s].items.push({name:'', description:'', price:''}); renderMenu();
+      menuState.sections[+e.target.dataset.s].items.push({name:'', description:'', price:'', image_url:''}); renderMenu();
     });
     document.querySelectorAll('.mn-item-del').forEach(b => b.onclick = (e) => {
       menuState.sections[+e.target.dataset.s].items.splice(+e.target.dataset.i, 1); renderMenu();
+    });
+    document.querySelectorAll('.mn-item-img-btn').forEach(b => b.onclick = async (e) => {
+      const s = +e.target.dataset.s;
+      const j = +e.target.dataset.i;
+      const url = await openContentPicker({ multiple: false, title: 'Select Item Photo' });
+      if (url) {
+        menuState.sections[s].items[j].image_url = url;
+        renderMenu();
+      }
     });
     document.querySelectorAll('.mn-item-name').forEach(i => i.oninput = (e) => { menuState.sections[+e.target.dataset.s].items[+e.target.dataset.i].name = e.target.value; });
     document.querySelectorAll('.mn-item-desc').forEach(i => i.oninput = (e) => { menuState.sections[+e.target.dataset.s].items[+e.target.dataset.i].description = e.target.value; });
@@ -1021,9 +1073,17 @@ export async function render(container) {
               <input type="number" class="input pr-area" data-idx="${i}" value="${escAttr(p.area_m2)}" placeholder="Area (m²)" style="flex:1">
             </div>
           </div>
-          <div style="width:120px;display:flex;flex-direction:column;gap:8px">
-            <img ${p.image_url && p.image_url.startsWith('/api/') ? `data-auth-src="${escAttr(p.image_url)}"` : `src="${escAttr(p.image_url||'')}"`} style="width:100%;height:80px;object-fit:cover;background:#0003;border-radius:3px" onerror="this.style.opacity='0.3'">
-            <button type="button" class="btn btn-secondary btn-sm pr-img-btn" data-idx="${i}">Change Image</button>
+          <div style="width:200px;display:flex;flex-direction:column;gap:8px;background:var(--bg-input);padding:8px;border-radius:4px">
+            <div style="font-size:11px;font-weight:bold;color:var(--text-muted)">Fotos (${(p.image_urls||[]).length})</div>
+            <div style="display:flex;gap:4px;flex-wrap:wrap;max-height:80px;overflow-y:auto">
+              ${(p.image_urls||[]).map((img, imgIdx) => `
+                <div style="position:relative;width:40px;height:40px">
+                  <img src="${escAttr(img)}" style="width:100%;height:100%;object-fit:cover;border-radius:3px">
+                  <button type="button" class="btn btn-danger pr-img-del" data-idx="${i}" data-img="${imgIdx}" style="position:absolute;top:-4px;right:-4px;padding:0;width:16px;height:16px;font-size:10px;line-height:1;border-radius:50%">X</button>
+                </div>
+              `).join('')}
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm pr-img-add" data-idx="${i}">+ Adicionar Foto</button>
           </div>
         </div>
         <button type="button" class="btn btn-secondary btn-sm pr-del" data-idx="${i}">Remove Property</button>
@@ -1039,12 +1099,23 @@ export async function render(container) {
     document.querySelectorAll('.pr-area').forEach(i => i.oninput = (e) => { propertyState.properties[+e.target.dataset.idx].area_m2 = e.target.value; });
     
     document.querySelectorAll('.pr-del').forEach(b => b.onclick = (e) => { propertyState.properties.splice(+e.target.dataset.idx, 1); renderProperty(); });
-    document.getElementById('prAddBtn').onclick = () => { propertyState.properties.push({title:'',price:'',listing_type:'venda',bedrooms:'',area_m2:'',image_url:''}); renderProperty(); };
+    document.getElementById('prAddBtn').onclick = () => { propertyState.properties.push({title:'',price:'',listing_type:'venda',bedrooms:'',area_m2:'',image_urls:[]}); renderProperty(); };
 
-    document.querySelectorAll('.pr-img-btn').forEach(b => b.onclick = async (e) => {
+    document.querySelectorAll('.pr-img-add').forEach(b => b.onclick = async (e) => {
       const idx = +e.target.dataset.idx;
       const url = await openContentPicker({ multiple: false, title: 'Select Image' });
-      if (url) { propertyState.properties[idx].image_url = url; renderProperty(); }
+      if (url) { 
+        if(!propertyState.properties[idx].image_urls) propertyState.properties[idx].image_urls = [];
+        propertyState.properties[idx].image_urls.push(url); 
+        renderProperty(); 
+      }
+    });
+    
+    document.querySelectorAll('.pr-img-del').forEach(b => b.onclick = (e) => {
+      const idx = +e.target.dataset.idx;
+      const imgIdx = +e.target.dataset.img;
+      propertyState.properties[idx].image_urls.splice(imgIdx, 1);
+      renderProperty();
     });
   }
 
@@ -1155,16 +1226,17 @@ export async function render(container) {
       }); break;
       case 'daily-menu': Object.assign(config, {
         establishment_name: val('wMenuTitle'),
+        logo_url: menuState.logo_url,
         currency: val('wMenuCurr'),
         sections: menuState.sections.map(s => ({
           title: s.title,
-          items: s.items.map(i => ({ name: i.name, description: i.description, price: i.price }))
+          items: s.items.map(i => ({ name: i.name, description: i.description, price: i.price, image_url: i.image_url }))
         }))
       }); break;
       case 'property-slide': Object.assign(config, {
         duration_sec: parseInt(val('wPropDur')) || 8,
         properties: propertyState.properties.map(p => ({
-          title: p.title, price: p.price, listing_type: p.listing_type, bedrooms: p.bedrooms, area_m2: p.area_m2, image_url: p.image_url
+          title: p.title, price: p.price, listing_type: p.listing_type, bedrooms: p.bedrooms, area_m2: p.area_m2, image_urls: p.image_urls || []
         }))
       }); break;
 
@@ -1275,6 +1347,71 @@ export async function render(container) {
         } catch (err) { showToast(err.message, 'error'); }
       }
     };
+  }
+
+  function showTemplateGallery(type, templates) {
+    const typeName = widgetTypeName(type);
+    document.getElementById('widgetModalTitle').textContent = t('widget.new_x', { type: typeName }) + ' - ' + t('common.templates', 'Templates');
+    
+    // Clear and prepare the config div for templates
+    const configDiv = document.getElementById('wConfig');
+    configDiv.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(240px, 1fr));gap:16px;margin-bottom:20px;">
+        <div class="content-item" style="cursor:pointer;border:2px dashed var(--border);background:var(--bg-panel);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:30px 20px;text-align:center" id="btnBlankTemplate">
+          <div style="font-size:24px;margin-bottom:8px;color:var(--text-muted)">+</div>
+          <div style="font-weight:600;font-size:14px">${t('widget.template.blank', 'Começar em branco')}</div>
+        </div>
+        ${templates.map(tpl => `
+          <div class="content-item template-card" style="cursor:pointer;position:relative" data-template-id="${escAttr(tpl.id)}">
+            <div style="padding:16px;display:flex;flex-direction:column;height:100%">
+              <div style="font-weight:600;font-size:15px;margin-bottom:6px">${escAttr(tpl.name)}</div>
+              <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px">${escAttr(tpl.category)}</div>
+              <div style="font-size:13px;color:var(--text);flex:1;line-height:1.4">${escAttr(tpl.description || '')}</div>
+              <div style="margin-top:16px;color:var(--accent);font-size:13px;font-weight:500">Usar Template &rarr;</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+    
+    // Preview logic on hover
+    configDiv.querySelectorAll('.template-card').forEach(card => {
+      card.onmouseenter = async () => {
+        const tpl = templates.find(t => t.id === card.dataset.templateId);
+        if (!tpl) return;
+        try {
+          const configJson = JSON.parse(tpl.config_json);
+          const res = await API('/widgets/preview-session', {
+            method: 'POST',
+            body: JSON.stringify({ widget_type: type, config: configJson })
+          });
+          const iframe = document.getElementById('previewFrame');
+          if (iframe && res.url) {
+            iframe.src = res.url + `?t=${Date.now()}`;
+          }
+        } catch (e) { console.error('Preview error', e); }
+      };
+      
+      card.onclick = () => {
+        const tpl = templates.find(t => t.id === card.dataset.templateId);
+        if (tpl) {
+          try {
+            const configJson = JSON.parse(tpl.config_json);
+            configJson._name = tpl.name; 
+            showConfigForm(type, configJson);
+          } catch(e) {
+            console.error('Failed to parse template config', e);
+            showConfigForm(type, {});
+          }
+        }
+      };
+    });
+    
+    document.getElementById('btnBlankTemplate').onclick = () => {
+      showConfigForm(type, {});
+    };
+    
+    document.getElementById('widgetModal').style.display = 'block';
   }
 
   loadWidgets();

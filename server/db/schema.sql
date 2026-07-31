@@ -583,6 +583,38 @@ CREATE TABLE IF NOT EXISTS agency_notifications (
 );
 CREATE INDEX IF NOT EXISTS idx_agency_notifications_unsent ON agency_notifications(sent_at);
 
+-- ===================== WIDGET TEMPLATES =====================
+-- Global templates for pre-populating widget configurations.
+CREATE TABLE IF NOT EXISTS widget_templates (
+    id              TEXT PRIMARY KEY,
+    widget_type     TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    category        TEXT NOT NULL,
+    description     TEXT,
+    config_json     TEXT NOT NULL,
+    thumbnail_url   TEXT,
+    sort_order      INTEGER NOT NULL DEFAULT 0,
+    is_active       INTEGER NOT NULL DEFAULT 1,
+    created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+
+INSERT OR IGNORE INTO widget_templates (id, widget_type, name, category, description, config_json, sort_order)
+VALUES
+  ('tpl-dm-1', 'daily-menu', 'Café Clássico', 'restaurant', 'Menu clássico com Bebidas e Doces.', 
+    '{"establishment_name":"Café Clássico","logo_url":"","currency":"€","theme":"rustic","sections":[{"title":"Bebidas","items":[{"name":"Café Expresso","description":"","price":"1.00","image_url":""},{"name":"Galão","description":"","price":"1.50","image_url":""},{"name":"Sumo Natural","description":"","price":"2.50","image_url":""}]},{"title":"Doces","items":[{"name":"Pastel de Nata","description":"","price":"1.20","image_url":""},{"name":"Bolo de Arroz","description":"","price":"1.30","image_url":""}]}]}', 1),
+  ('tpl-dm-2', 'daily-menu', 'Restaurante Elegante', 'restaurant', 'Menu elegante para jantares.', 
+    '{"establishment_name":"Restaurante Elegante","logo_url":"","currency":"€","theme":"dark","sections":[{"title":"Entradas","items":[{"name":"Pão e Azeitonas","description":"","price":"2.50","image_url":""},{"name":"Queijo Seco","description":"","price":"4.00","image_url":""}]},{"title":"Pratos","items":[{"name":"Bacalhau à Brás","description":"","price":"12.00","image_url":""},{"name":"Bife da Vazia","description":"","price":"15.00","image_url":""}]},{"title":"Sobremesas","items":[{"name":"Mousse de Chocolate","description":"","price":"3.50","image_url":""}]}]}', 2),
+  ('tpl-dm-3', 'daily-menu', 'Menu do Dia Simples', 'restaurant', 'Menu rápido, ideal para pequenos ecrãs.', 
+    '{"establishment_name":"O Tasco","logo_url":"","currency":"€","theme":"light","sections":[{"title":"Pratos do Dia","items":[{"name":"Feijoada","description":"Prato típico português","price":"7.50","image_url":""},{"name":"Grelhada Mista","description":"Com batata a murro","price":"8.50","image_url":""}]}]}', 3),
+  ('tpl-ps-1', 'property-slide', 'Imobiliária Luxo', 'real-estate', 'Apresentação cuidada para propriedades de luxo.', 
+    '{"duration_sec":8,"transition":"fade","properties":[{"title":"Moradia T4 Cascais","price":"1 250 000 €","listing_type":"venda","bedrooms":"4","area_m2":"320","image_urls":["https://images.unsplash.com/photo-1512917774080-9991f1c4c750?w=1200&q=80"]},{"title":"Penthouse Lisboa","price":"850 000 €","listing_type":"venda","bedrooms":"3","area_m2":"180","image_urls":["https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?w=1200&q=80"]}]}', 4),
+  ('tpl-ps-2', 'property-slide', 'Arrendamento Rápido', 'real-estate', 'Propriedades para arrendamento com tempo de slide reduzido.', 
+    '{"duration_sec":5,"transition":"slide","properties":[{"title":"T1 Centro Porto","price":"800 €","listing_type":"arrendamento","bedrooms":"1","area_m2":"60","image_urls":["https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=1200&q=80"]},{"title":"T2 Campo Grande","price":"1200 €","listing_type":"arrendamento","bedrooms":"2","area_m2":"85","image_urls":["https://images.unsplash.com/photo-1502672260266-1c1cd2cb44a1?w=1200&q=80"]}]}', 5),
+  ('tpl-rt-1', 'rollover-text', 'Avisos da Loja', 'general', 'Avisos rotativos com fundo dinâmico.', 
+    '{"messages":["Bem-vindos à nossa loja!","Horário: Segunda a Sábado, 9h - 19h","Aproveite as promoções de Inverno!"],"duration_sec":6,"transition":"fade","font_size":"5","text_color":"#ffffff","bg_color":"#1f2937"}', 6),
+  ('tpl-rt-2', 'rollover-text', 'Boas-vindas', 'general', 'Mensagens centrais grandes e limpas.', 
+    '{"messages":["BEM-VINDO!","Sinta-se em casa."],"duration_sec":8,"transition":"slide","font_size":"8","text_color":"#111827","bg_color":"#f3f4f6"}', 7);
+
 -- ===================== SCHEMA MIGRATIONS =====================
 
 CREATE TABLE IF NOT EXISTS schema_migrations (

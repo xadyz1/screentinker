@@ -141,6 +141,36 @@ function checkWidgetWrite(req, res) {
   return widget;
 }
 
+// Get widget templates
+router.get('/widget-templates', (req, res) => {
+  const type = req.query.type;
+  const category = req.query.category;
+  let query = 'SELECT id, widget_type, name, category, description, config_json, thumbnail_url, sort_order FROM widget_templates WHERE is_active = 1';
+  const params = [];
+  
+  if (type) {
+    query += ' AND widget_type = ?';
+    params.push(type);
+  }
+  if (category) {
+    query += ' AND category = ?';
+    params.push(category);
+  }
+  
+  query += ' ORDER BY sort_order ASC, name ASC';
+  
+  try {
+    const templates = db.prepare(query).all(...params);
+    res.json(templates);
+  } catch (err) {
+    // Graceful fallback if table doesn't exist yet
+    if (err.message.includes('no such table')) {
+      return res.json([]);
+    }
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 // Get widget
 router.get('/:id', (req, res) => {
   const widget = checkWidgetRead(req, res);
@@ -252,7 +282,8 @@ function renderRolloverText(config) {
 
 function renderDailyMenu(config) {
   const c = config || {};
-  const title = c.title || '';
+  const title = c.establishment_name || '';
+  const logo = c.logo_url || '';
   const sections = Array.isArray(c.sections) ? c.sections : [];
   const currency = c.currency || '€';
   const theme = c.theme || 'dark';
@@ -263,14 +294,17 @@ function renderDailyMenu(config) {
 
   const htmlSections = sections.map(sec => `
     <div class="menu-section">
-      <div class="section-title">${escapeHtml(sec.name || 'Section')}</div>
+      <div class="section-title">${escapeHtml(sec.title || 'Section')}</div>
       ${(sec.items || []).map(item => `
         <div class="menu-item">
-          <div class="item-main">
-            <div class="item-name">${escapeHtml(item.name || '')}</div>
-            <div class="item-price">${escapeHtml(item.price || '')} ${escapeHtml(currency)}</div>
+          ${item.image_url ? `<img src="${escapeHtml(item.image_url)}" class="item-img">` : ''}
+          <div class="item-content">
+            <div class="item-main">
+              <div class="item-name">${escapeHtml(item.name || '')}</div>
+              <div class="item-price">${escapeHtml(item.price || '')} ${escapeHtml(currency)}</div>
+            </div>
+            ${item.description ? `<div class="item-desc">${escapeHtml(item.description)}</div>` : ''}
           </div>
-          ${item.desc ? `<div class="item-desc">${escapeHtml(item.desc)}</div>` : ''}
         </div>
       `).join('')}
     </div>
@@ -282,10 +316,14 @@ function renderDailyMenu(config) {
 <meta charset="utf-8">
 <style>
   body { margin:0; padding:4vw; background:${bg}; color:${fg}; font-family:${font}; box-sizing:border-box; height:100vh; overflow:hidden; display:flex; flex-direction:column; }
-  .title { text-align:center; font-size:5vw; font-weight:bold; margin-bottom:4vw; color:${accent}; text-transform:uppercase; letter-spacing:0.05em; }
+  .header { display:flex; flex-direction:column; align-items:center; margin-bottom:4vw; gap:2vw; }
+  .logo { max-height:12vw; max-width:80%; object-fit:contain; }
+  .title { text-align:center; font-size:${logo ? '3vw' : '5vw'}; font-weight:bold; color:${accent}; text-transform:uppercase; letter-spacing:0.05em; }
   .menu-grid { display:flex; flex-direction:column; gap:4vw; flex:1; overflow-y:auto; }
   .section-title { font-size:3.5vw; font-weight:bold; border-bottom:2px solid ${accent}; padding-bottom:1vw; margin-bottom:2vw; color:${accent}; }
-  .menu-item { margin-bottom:2vw; }
+  .menu-item { margin-bottom:2vw; display:flex; gap:3vw; align-items:center; }
+  .item-img { width:12vw; height:12vw; object-fit:cover; border-radius:1vw; flex-shrink:0; }
+  .item-content { flex:1; }
   .item-main { display:flex; justify-content:space-between; align-items:baseline; }
   .item-name { font-size:2.8vw; font-weight:bold; }
   .item-price { font-size:2.8vw; font-weight:bold; white-space:nowrap; margin-left:2vw; }
@@ -293,7 +331,10 @@ function renderDailyMenu(config) {
 </style>
 </head>
 <body>
-  ${title ? `<div class="title">${escapeHtml(title)}</div>` : ''}
+  <div class="header">
+    ${logo ? `<img class="logo" src="${escapeHtml(logo)}">` : ''}
+    ${title ? `<div class="title">${escapeHtml(title)}</div>` : ''}
+  </div>
   <div class="menu-grid">
     ${htmlSections}
   </div>
@@ -303,7 +344,7 @@ function renderDailyMenu(config) {
 
 function renderPropertySlide(config) {
   const props = Array.isArray(config.properties) && config.properties.length > 0 ? config.properties : [{title: 'No properties configured'}];
-  const duration = parseInt(config.duration) || 8;
+  const duration = parseInt(config.duration_sec) || 8;
   const effect = config.transition === 'slide' ? 'slide' : 'fade';
   
   return `<!DOCTYPE html>
@@ -316,39 +357,70 @@ function renderPropertySlide(config) {
   
   ${effect === 'fade' ? `
   .slide { transition: opacity 1s ease-in-out; }
-  .slide.active { opacity: 1; z-index: 1; }
+  .slide.active { opacity: 1; z-index: 1; pointer-events:auto; }
   ` : `
   .slide { transition: transform 1s ease-in-out, opacity 1s ease-in-out; transform: translateX(100%); opacity:0; }
-  .slide.active { transform: translateX(0); opacity:1; z-index: 1; }
+  .slide.active { transform: translateX(0); opacity:1; z-index: 1; pointer-events:auto; }
   .slide.exit { transform: translateX(-100%); opacity:0; }
   `}
 
-  .bg { position:absolute; inset:0; background-size:cover; background-position:center; opacity:0.6; }
-  .content { position:absolute; bottom:0; left:0; right:0; padding:4vw; background:linear-gradient(transparent, rgba(0,0,0,0.9)); display:flex; flex-direction:column; gap:1vw; }
-  .type-badge { align-self:flex-start; background:#3b82f6; color:#fff; padding:0.5vw 1.5vw; border-radius:1vw; font-size:2vw; font-weight:bold; text-transform:uppercase; }
+  .bg-container { position:absolute; inset:0; z-index:0; }
+  .bg-img { position:absolute; inset:0; background-size:cover; background-position:center; opacity:0; transition:opacity 1s ease-in-out; }
+  .bg-img.active { opacity:0.6; }
+  .empty-bg { position:absolute; inset:0; background:#333; display:flex; align-items:center; justify-content:center; flex-direction:column; color:#aaa; font-size:4vw; }
+
+  .content { position:absolute; bottom:0; left:0; right:0; padding:4vw; background:linear-gradient(transparent, rgba(0,0,0,0.95)); display:flex; flex-direction:column; gap:1.5vw; z-index:1; }
+  .type-badge { align-self:flex-start; background:#3b82f6; color:#fff; padding:0.5vw 1.5vw; border-radius:1vw; font-size:2vw; font-weight:bold; text-transform:uppercase; box-shadow:0 2px 4px rgba(0,0,0,0.5); }
   .title { font-size:4vw; font-weight:bold; text-shadow:1px 1px 4px rgba(0,0,0,0.8); }
   .details { display:flex; gap:3vw; font-size:2.5vw; align-items:center; flex-wrap:wrap; }
-  .price { font-size:3.5vw; font-weight:bold; color:#10b981; }
-  .meta { display:flex; gap:1vw; align-items:center; background:rgba(255,255,255,0.2); padding:0.5vw 1.5vw; border-radius:1vw; }
+  .price { font-size:3.5vw; font-weight:bold; color:#10b981; text-shadow:1px 1px 3px rgba(0,0,0,0.8); }
+  .meta { display:flex; gap:1vw; align-items:center; background:rgba(0,0,0,0.5); border:1px solid rgba(255,255,255,0.2); padding:0.5vw 1.5vw; border-radius:1vw; font-weight:500; }
 </style>
 </head>
 <body>
-  ${props.map((p, i) => `
-    <div class="slide ${i===0?'active':''}" id="s${i}">
-      ${p.image_url ? `<div class="bg" style="background-image:url('${escapeHtml(p.image_url)}')"></div>` : ''}
+  ${props.map((p, i) => {
+    const imgs = Array.isArray(p.image_urls) && p.image_urls.length > 0 ? p.image_urls : [];
+    return `
+    <div class="slide ${i===0?'active':''}" id="s${i}" data-imgs="${imgs.length}">
+      <div class="bg-container" id="bgc${i}">
+        ${imgs.length > 0 
+          ? imgs.map((img, j) => `<div class="bg-img ${j===0?'active':''}" id="img-${i}-${j}" style="background-image:url('${escapeHtml(img)}')"></div>`).join('') 
+          : `<div class="empty-bg"><span style="font-size:8vw;margin-bottom:2vw;">🏠</span>Sem foto</div>`
+        }
+      </div>
       <div class="content">
-        ${p.type ? `<div class="type-badge">${escapeHtml(p.type)}</div>` : ''}
+        ${p.listing_type ? `<div class="type-badge">${escapeHtml(p.listing_type)}</div>` : ''}
         <div class="title">${escapeHtml(p.title || '')}</div>
         <div class="details">
           ${p.price ? `<div class="price">${escapeHtml(p.price)}</div>` : ''}
-          ${p.rooms ? `<div class="meta">🛏️ ${escapeHtml(p.rooms)}</div>` : ''}
-          ${p.area ? `<div class="meta">📏 ${escapeHtml(p.area)} m²</div>` : ''}
+          ${p.bedrooms ? `<div class="meta">🛏️ ${escapeHtml(p.bedrooms)}</div>` : ''}
+          ${p.area_m2 ? `<div class="meta">📏 ${escapeHtml(p.area_m2)} m²</div>` : ''}
         </div>
       </div>
     </div>
-  `).join('')}
+  `}).join('')}
   <script>
     const count = ${props.length};
+    const mainDurationMs = ${duration * 1000};
+    
+    // Setup inner slideshows
+    for (let i = 0; i < count; i++) {
+      const slide = document.getElementById('s' + i);
+      const numImgs = parseInt(slide.dataset.imgs || '0');
+      if (numImgs > 1) {
+        let imgIdx = 0;
+        const innerDuration = mainDurationMs / numImgs;
+        setInterval(() => {
+          if (!slide.classList.contains('active')) return;
+          const prevImg = document.getElementById('img-' + i + '-' + imgIdx);
+          imgIdx = (imgIdx + 1) % numImgs;
+          const nextImg = document.getElementById('img-' + i + '-' + imgIdx);
+          if(prevImg) prevImg.classList.remove('active');
+          if(nextImg) nextImg.classList.add('active');
+        }, innerDuration);
+      }
+    }
+
     if (count > 1) {
       let idx = 0;
       setInterval(() => {
@@ -356,6 +428,18 @@ function renderPropertySlide(config) {
         idx = (idx + 1) % count;
         const next = document.getElementById('s' + idx);
         
+        // reset inner slideshow of next before showing
+        const numImgs = parseInt(next.dataset.imgs || '0');
+        if (numImgs > 1) {
+           for(let k=0; k<numImgs; k++) {
+             const im = document.getElementById('img-' + idx + '-' + k);
+             if (im) {
+               if(k===0) im.classList.add('active');
+               else im.classList.remove('active');
+             }
+           }
+        }
+
         ${effect === 'fade' ? `
         prev.classList.remove('active');
         next.classList.add('active');
@@ -365,7 +449,7 @@ function renderPropertySlide(config) {
         next.classList.remove('exit');
         next.classList.add('active');
         `}
-      }, ${duration * 1000});
+      }, mainDurationMs);
     }
   </script>
 </body>

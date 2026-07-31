@@ -137,6 +137,16 @@ Schema migrations run automatically on first boot — no manual migration comman
 | `HEARTBEAT_INTERVAL` | App-level offline-checker frequency (ms). How often the server sweeps the device list looking for stale heartbeats. | `10000` |
 | `HEARTBEAT_TIMEOUT` | How long without an app-level heartbeat (ms) before marking a device offline. Raise for slow/jittery networks. | `45000` |
 | `COMMAND_QUEUE_TTL_MS` | How long the server holds commands and playlist-updates for a device that's offline at emit time (ms). Flushed in order on reconnect within this window; dropped past TTL. | `30000` |
+| `DEFAULT_ADMIN_PASSWORD` | Force the initial admin user to use this password instead of a randomly generated one when the database is created. | _(random)_ |
+
+### Troubleshooting: Database Loss / Admin Reset
+
+If you find that your admin account is deleted or reset on every restart/commit, **this is not an authentication bug**. It means your deployment environment is deleting the local SQLite database file (`server/data/app.db`) between runs.
+
+- The database (`server/data/app.db`) is intentionally ignored in `.gitignore`.
+- If your host provides a volatile filesystem (like Heroku or some Docker setups without mounted volumes) or if you run `git clean` frequently, the database will be destroyed.
+- **Solution for Development:** Define `DEFAULT_ADMIN_PASSWORD=your_password` in `server/.env` so that when the database is inevitably recreated, you don't have to check the terminal logs for the random password.
+- **Solution for Production:** Ensure the `server/data/` folder is mounted to a persistent volume, or regularly back up `server/data/app.db`.
 
 ### Optional Integrations
 
