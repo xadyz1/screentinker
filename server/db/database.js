@@ -48,69 +48,29 @@ try {
   }
 }
 
-// Safe immediate sync lock to avoid crashing the Rust core with concurrent .sync()
+// Safe background sync debouncer
 let _syncPending = false;
 let _syncRunning = false;
 let _syncTimer = null;
 
 function requestDbSync() {
   if (!dbOptions.syncUrl || typeof db.sync !== 'function') return;
-  if (db.inTransaction) {
-    if (_syncTimer) clearTimeout(_syncTimer);
-    _syncTimer = setTimeout(requestDbSync, 50); // Defer if in transaction
-    return;
-  }
-  if (_syncRunning) {
-    _syncPending = true;
-    return;
-  }
-  
-  _syncRunning = true;
-  _syncPending = false;
-  if (_syncTimer) clearTimeout(_syncTimer);
-  
-  try {
-    db.sync(); // Execute synchronous sync immediately
-  } catch (err) {
-    console.error('[libsql] Auto-sync failed:', err.message);
-  } finally {
-    _syncRunning = false;
-    if (_syncPending) {
-      _syncTimer = setTimeout(requestDbSync, 10);
+  _syncPending = true;
+  if (_syncRunning || _syncTimer) return;
+
+  _syncTimer = setTimeout(() => {
+    _syncTimer = null;
+    if (_syncRunning || !_syncPending || db.inTransaction) return;
+    _syncRunning = true;
+    _syncPending = false;
+    try {
+      db.sync();
+    } catch (err) {
+      console.error('[libsql] Auto-sync background error:', err.message);
+    } finally {
+      _syncRunning = false;
     }
-  }
-}
-
-if (dbOptions.syncUrl && typeof db.sync === 'function') {
-  // Monkey-patch libSQL to provide immediate read-after-write consistency for embedded replicas
-  const originalPrepare = db.prepare;
-  db.prepare = function(sql) {
-    const stmt = originalPrepare.call(this, sql);
-    const originalRun = stmt.run;
-    stmt.run = function(...args) {
-      const result = originalRun.apply(this, args);
-      requestDbSync();
-      return result;
-    };
-    return stmt;
-  };
-  
-  const originalExec = db.exec;
-  db.exec = function(sql) {
-    const result = originalExec.call(this, sql);
-    requestDbSync();
-    return result;
-  };
-
-  const originalTransaction = db.transaction;
-  db.transaction = function(fn) {
-    const tx = originalTransaction.call(this, fn);
-    return function(...args) {
-      const result = tx.apply(this, args);
-      requestDbSync();
-      return result;
-    };
-  };
+  }, 1000);
 }
 
 // Enable foreign keys (and WAL mode if supported)

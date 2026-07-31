@@ -463,76 +463,161 @@
       font-size: 18px;
     }
 
-    .pricing-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-      gap: 20px;
+    .pricing-cards {
+      display: flex;
+      gap: 24px;
+      justify-content: center;
+      max-width: 900px;
+      margin: 0 auto;
+      width: 100%;
     }
 
-    .price-card {
+    .modern-price-card {
       background: var(--card);
       border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 28px;
+      border-radius: 16px;
+      padding: 32px 28px;
+      flex: 1;
+      max-width: 420px;
+      display: flex;
+      flex-direction: column;
       position: relative;
+      transition: transform 0.2s, box-shadow 0.2s;
     }
 
-    .price-card.featured {
+    .modern-price-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.3);
+    }
+
+    .modern-price-card.featured {
       border-color: var(--accent);
+      background: linear-gradient(180deg, rgba(59, 130, 246, 0.08) 0%, var(--card) 100%);
     }
 
-    .price-card.featured::before {
+    .modern-price-card.featured::before {
       content: 'Most Popular';
       position: absolute;
       top: -12px;
       left: 50%;
       transform: translateX(-50%);
       background: var(--accent);
-      color: white;
-      padding: 4px 16px;
-      border-radius: 12px;
+      color: #fff;
+      padding: 4px 14px;
+      border-radius: 20px;
       font-size: 12px;
       font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
 
-    .price-card h3 {
-      font-size: 20px;
+    .modern-price-card h3 {
+      font-size: 22px;
       margin-bottom: 4px;
     }
 
-    .price-card .price {
-      font-size: 36px;
+    .modern-price-card .price {
+      font-size: 40px;
       font-weight: 700;
-      color: var(--accent);
-      margin: 12px 0;
+      color: var(--text);
+      margin: 12px 0 4px 0;
     }
 
-    .price-card .price span {
+    .modern-price-card .price span {
       font-size: 16px;
       color: var(--muted);
       font-weight: 400;
     }
 
-    .price-card .yearly {
-      font-size: 12px;
-      color: var(--dim);
-      margin-bottom: 16px;
-    }
-
-    .price-card ul {
-      list-style: none;
+    .modern-price-card .billing-cycle {
+      font-size: 13px;
+      color: var(--muted);
       margin-bottom: 20px;
     }
 
-    .price-card li {
-      font-size: 14px;
-      color: var(--muted);
-      padding: 4px 0;
+    .modern-price-card ul {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 28px 0;
+      flex: 1;
     }
 
-    .price-card li::before {
-      content: ' ';
+    .modern-price-card li {
+      font-size: 14px;
+      color: var(--text);
+      padding: 8px 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .modern-price-card li svg {
       color: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .vat-note {
+      text-align: center;
+      margin-top: 20px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    /* FAQ Accordion */
+    .faq-accordion {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      margin-top: 24px;
+    }
+
+    .faq-item {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+
+    .faq-item summary {
+      padding: 18px 24px;
+      font-size: 17px;
+      font-weight: 600;
+      cursor: pointer;
+      list-style: none;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: var(--text);
+    }
+
+    .faq-item summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .faq-item summary::after {
+      content: '+';
+      font-size: 22px;
+      color: var(--accent);
+      transition: transform 0.2s;
+    }
+
+    .faq-item[open] summary::after {
+      content: '−';
+    }
+
+    .faq-content {
+      padding: 0 24px 20px 24px;
+    }
+
+    @media (max-width: 768px) {
+      .pricing-cards {
+        flex-direction: column;
+        align-items: center;
+      }
+      .modern-price-card {
+        width: 100%;
+      }
     }
 
     /* Compare */
@@ -1073,75 +1158,6 @@
       <div class="vat-note">* Prices exclude VAT</div>
     </section>
 
-            </tr>
-            <tr>
-              <td>Free tier</td>
-              <td class="yes">&#10003; 1 device</td>
-              <td class="yes">&#10003;</td>
-              <td class="no">&#10007;</td>
-              <td class="yes">&#10003;</td>
-            </tr>
-            <tr>
-              <td>Video Wall</td>
-              <td class="yes">&#10003; Included</td>
-              <td class="partial">Basic</td>
-              <td class="partial">
-                Basic<!-- VERIFY: multi-screen confirmed; bezel-compensated video wall not confirmed --></td>
-              <td class="partial">Paid add-on</td>
-            </tr>
-            <tr>
-              <td>Live screen view + remote key presses*</td>
-              <td class="yes">&#10003; All plans</td>
-              <td class="partial">Limited</td>
-              <td class="partial">Limited</td>
-              <td class="partial">Limited</td>
-            </tr>
-            <tr>
-              <td>Kiosk/Touchscreen</td>
-              <td class="yes">&#10003; Included</td>
-              <td class="yes">&#10003;</td>
-              <td class="partial">Limited</td>
-              <td class="yes">&#10003;</td>
-            </tr>
-            <tr>
-              <td>Proof-of-Play</td>
-              <td class="yes">&#10003; All plans</td>
-              <td class="paid">Paid tier</td>
-              <td class="paid">Paid</td>
-              <td class="paid">Paid</td>
-            </tr>
-            <tr>
-              <td>Self-Hosted</td>
-              <td class="yes">&#10003; Only us</td>
-              <td class="no">&#10007;</td>
-              <td class="no">&#10007;</td>
-              <td class="no">&#10007;</td>
-            </tr>
-            <tr>
-              <td>White Label</td>
-              <td class="yes">&#10003; Included</td>
-              <td class="paid">Paid</td>
-              <td class="paid">Enterprise</td>
-              <td class="paid">Paid tier</td>
-            </tr>
-            <tr>
-              <td>Email Alerts</td>
-              <td class="yes">&#10003; All plans</td>
-              <td class="paid">Paid</td>
-              <td class="paid">Paid</td>
-              <td class="paid">Paid</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <p style="max-width:1000px;margin:16px auto 0;font-size:12px;color:var(--dim);line-height:1.6">
-        * Live screen view + remote key presses is Android only and requires granting the on-device accessibility
-        permission.<br>
-        Comparison as of June 2026, based on each vendor's publicly listed pricing and documentation. Spot an error? <a
-          href="https://github.com/swiftdisplay/swiftdisplay/issues" target="_blank" rel="noopener"
-          style="color:var(--accent)">Open an issue on GitHub</a> and we'll fix it.
-      </p>
-    </section>
 
     <!-- Resources / internal linking for SEO -->
     <section class="resources" id="resources" style="max-width:1000px;margin:0 auto;padding:60px 24px;">
