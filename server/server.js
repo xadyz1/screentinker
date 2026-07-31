@@ -633,6 +633,9 @@ app.get('/api/version', (req, res) => {
 // Public status page
 app.use('/api/status', require('./routes/status'));
 
+// Public Ticket Queue
+app.use('/public/q', require('./routes/public_queue'));
+
 // #146 BILLING: Usage Report on its OWN route (NOT part of /api/status — billing is revenue
 // data and a heavier aggregate than the hot status path). bearerAuth is the dual front door:
 // a 'billing:read' API token (Bearer st_...) OR a JWT session both reach it; the route's

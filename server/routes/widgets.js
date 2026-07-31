@@ -191,7 +191,7 @@ router.put('/:id', (req, res) => {
 });
 
 // Call next ticket for ticket-queue
-router.post('/:id/ticket-queue/call', (req, res) => {
+router.post('/:id/ticket-queue/call', express.json(), (req, res) => {
   const widget = checkWidgetWrite(req, res);
   if (!widget) return;
   if (widget.widget_type !== 'ticket-queue') {
@@ -201,21 +201,34 @@ router.post('/:id/ticket-queue/call', (req, res) => {
   let config = {};
   try { config = JSON.parse(widget.config); } catch (e) {}
   
+  const body = req.body || {};
   let current = parseInt(config.currentTicket) || 0;
-  current++;
+  let counterName = config.counterName || 'Balcão 1';
+  
+  // If specific ticket/counter is passed (from a public queue system)
+  if (body.ticket) {
+    current = parseInt(body.ticket) || current;
+  } else {
+    current++;
+  }
+  if (body.counter) {
+    counterName = body.counter;
+  }
+  
   const formatted = current.toString().padStart(3, '0');
   
   const lastCalled = Array.isArray(config.lastCalled) ? config.lastCalled : [];
   if (config.currentTicket) {
-    lastCalled.unshift(config.currentTicket);
-    if (lastCalled.length > 3) lastCalled.pop();
+    lastCalled.unshift({ ticket: config.currentTicket, counter: config.counterName || 'Balcão 1' });
+    if (lastCalled.length > 5) lastCalled.pop();
   }
   
   config.currentTicket = formatted;
+  config.counterName = counterName;
   config.lastCalled = lastCalled;
   
   db.prepare("UPDATE widgets SET config = ?, updated_at = strftime('%s','now') WHERE id = ?").run(JSON.stringify(config), req.params.id);
-  res.json({ success: true, currentTicket: formatted, lastCalled });
+  res.json({ success: true, currentTicket: formatted, counter: counterName, lastCalled });
 });
 
 // Delete widget
@@ -227,7 +240,7 @@ router.delete('/:id', (req, res) => {
 });
 
 const KNOWN_WIDGET_TYPES = new Set(['clock','weather','rss','text','webpage','social','directory-board','directory-search','diag-smoothness', 'crypto', 'world-clock', 'rollover-text', 'daily-menu', 'property-slide', 'modern-clock', 'ticket-queue', 'bi-dashboard']);
-function renderWidgetHtml(type, config) {
+function renderWidgetHtml(type, config, widgetId = '') {
   config = config || {};
   switch (type) {
     case 'crypto': return renderCrypto();
@@ -247,7 +260,7 @@ function renderWidgetHtml(type, config) {
     case 'daily-menu': return renderDailyMenu(config);
     case 'property-slide': return renderPropertySlide(config);
     case 'modern-clock': return renderModernClock(config);
-    case 'ticket-queue': return renderTicketQueue(config);
+    case 'ticket-queue': return renderTicketQueue(config, widgetId);
     case 'bi-dashboard': return renderBiDashboard(config);
     default: return '<html><body style="color:white;background:black;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><h1>Unknown widget</h1></body></html>';
   }
@@ -488,22 +501,26 @@ function renderPropertySlide(config) {
 </html>`;
 }
 
-// Render widget as HTML page
+// Render widget content
 router.get('/:id/render', (req, res) => {
   const widget = db.prepare('SELECT * FROM widgets WHERE id = ?').get(req.params.id);
   if (!widget) return res.status(404).send('Widget not found');
-  const config = JSON.parse(widget.config || '{}');
-  // This page is DESIGNED to be embedded by the player, which frames it in a
-  // sandboxed (allow-scripts, no allow-same-origin) iframe = a null origin. The
-  // global helmet X-Frame-Options: SAMEORIGIN refuses that (null != same), so
-  // widgets render blank in the web player. Drop it here; the sandbox - not
-  // X-Frame-Options - is what isolates the widget (it can't read the dashboard JWT).
+  
+  let config = {};
+  try { config = JSON.parse(widget.config); } catch (e) {}
+  
+  let html = renderWidgetHtml(widget.widget_type, config, req.params.id);
+  
+  if (req.workspaceId) html = inlineUserContent(html, req.workspaceId);
+  
+  if (!html.includes('<base href=')) {
+    html = html.replace('<head>', `<head><base href="${req.protocol}://${req.get('host')}">`);
+  }
+  
   res.removeHeader('X-Frame-Options');
-  // Never cache the render: widget data (clock/weather/rss/directory) changes, and
-  // a cached copy from before the X-Frame-Options change would keep showing blank.
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Content-Type', 'text/html');
-  res.send(renderWidgetHtml(widget.widget_type, config));
+  res.send(html);
 });
 
 // Public JSON feed of a directory board's entries. A directory-search page polls
@@ -513,16 +530,27 @@ router.get('/:id/render', (req, res) => {
 // polling page keeps its last-good data instead of blanking on a transient miss.
 router.get('/:id/data.json', (req, res) => {
   const widget = db.prepare('SELECT * FROM widgets WHERE id = ?').get(req.params.id);
-  if (!widget || widget.widget_type !== 'directory-board') return res.status(404).json({ error: 'Not a directory board' });
-  let categories = [];
+  if (!widget) return res.status(404).json({ error: 'Not found' });
+  
+  let payload = {};
   try {
     const cfg = JSON.parse(widget.config || '{}');
-    categories = Array.isArray(cfg.categories) ? cfg.categories : [];
-  } catch (e) { categories = []; }
+    if (widget.widget_type === 'directory-board') {
+      payload.categories = Array.isArray(cfg.categories) ? cfg.categories : [];
+    } else if (widget.widget_type === 'ticket-queue') {
+      payload.ticketQueue = {
+        current: { ticket: cfg.currentTicket || '000', counter: cfg.counterName || 'Balcão 1' },
+        lastCalled: Array.isArray(cfg.lastCalled) ? cfg.lastCalled : []
+      };
+    } else {
+      return res.status(404).json({ error: 'Widget type not supported for data.json' });
+    }
+  } catch (e) {}
+  
   res.removeHeader('X-Frame-Options');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cache-Control', 'no-store');
-  res.json({ categories });
+  res.json(payload);
 });
 
 // Latest frame-rate telemetry per widget, reported by the diag-smoothness widget running on a device.
@@ -1644,40 +1672,119 @@ function renderModernClock(config) {
 </html>`;
 }
 
-function renderTicketQueue(config) {
+function renderTicketQueue(config, widgetId) {
   const current = config.currentTicket || '000';
   const lastCalled = Array.isArray(config.lastCalled) ? config.lastCalled : [];
   const counter = config.counterName || 'Balcão 1';
   const color = safeCss(config.color, '#e53935');
+  const estName = config.establishment_name || '';
+  const counters = Array.isArray(config.counters) ? config.counters : [{ label: counter }];
+  const mode = config.call_mode || 'auto';
+  
+  // Public URL for taking a ticket
+  const publicUrl = widgetId ? `/public/q/${widgetId}` : '';
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=1&data=${encodeURIComponent('https://' + (process.env.PUBLIC_DOMAIN || 'swiftdisplay.pt') + publicUrl)}`;
   
   return `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
   <style>
-    html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; background: #000; color: #fff; font-family: system-ui, sans-serif; display: flex; }
-    .left { flex: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; background: ${escapeHtml(color)}; }
+    html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; background: #000; color: #fff; font-family: system-ui, sans-serif; display: flex; overflow: hidden; }
+    .left { flex: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; background: ${escapeHtml(color)}; position: relative; }
+    .est-name { position: absolute; top: 3vh; font-size: 3vw; font-weight: bold; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.8; text-align: center; width: 100%; }
     .right { flex: 1; display: flex; flex-direction: column; background: #111; border-left: 5px solid #222; }
-    .title { font-size: 4vw; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.9; }
+    .title { font-size: 4vw; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.9; margin-top: 5vh; }
     .ticket { font-size: 20vw; font-weight: 900; line-height: 1; margin: 2vh 0; }
     .counter { font-size: 5vw; font-weight: bold; }
+    
+    .bottom-qr { position: absolute; bottom: 3vh; left: 3vh; display: flex; align-items: center; gap: 2vw; background: rgba(0,0,0,0.3); padding: 1vw; border-radius: 1vw; }
+    .bottom-qr img { width: 10vw; height: 10vw; border-radius: 0.5vw; background: #fff; padding: 0.5vw; }
+    .bottom-qr .qr-text { font-size: 1.5vw; font-weight: bold; max-width: 15vw; line-height: 1.3; }
+    
     .history-title { padding: 3vh; font-size: 3vw; background: #222; text-align: center; font-weight: bold; }
     .history-list { flex: 1; display: flex; flex-direction: column; }
-    .history-item { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 6vw; font-weight: bold; border-bottom: 2px solid #222; }
+    .history-item { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 5vw; font-weight: bold; border-bottom: 2px solid #222; gap: 2vw; }
+    .history-item .h-ticket { font-size: 6vw; }
+    .history-item .h-counter { font-size: 2vw; opacity: 0.7; }
   </style>
 </head>
 <body>
   <div class="left">
+    ${estName ? `<div class="est-name">${escapeHtml(estName)}</div>` : ''}
     <div class="title">Senha Atual</div>
-    <div class="ticket">${escapeHtml(String(current))}</div>
-    <div class="counter">${escapeHtml(counter)}</div>
+    <div class="ticket" id="currentTicket">${escapeHtml(String(current))}</div>
+    <div class="counter" id="currentCounter">${escapeHtml(counter)}</div>
+    
+    ${mode === 'auto' && widgetId ? `
+    <div class="bottom-qr">
+      <img src="${qrUrl}" alt="QR Code">
+      <div class="qr-text">Faça scan para tirar a sua senha</div>
+    </div>` : ''}
   </div>
   <div class="right">
     <div class="history-title">Últimas Chamadas</div>
-    <div class="history-list">
-      \${lastCalled.map(t => \`<div class="history-item">\${escapeHtml(String(t))}</div>\`).join('')}
+    <div class="history-list" id="historyList">
+      ${lastCalled.map(t => {
+        const tNum = typeof t === 'object' ? t.ticket : t;
+        const cName = typeof t === 'object' ? t.counter : '';
+        return `<div class="history-item">
+          <span class="h-ticket">${escapeHtml(String(tNum))}</span>
+          ${cName ? `<span class="h-counter">${escapeHtml(String(cName))}</span>` : ''}
+        </div>`;
+      }).join('')}
     </div>
   </div>
+  
+  ${config.soundEnabled !== false ? `
+  <audio id="chimeAudio" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" preload="auto"></audio>
+  ` : ''}
+  
+  <script>
+    const widgetId = '${escapeHtml(widgetId)}';
+    let lastTicket = '${escapeHtml(String(current))}';
+    let lastCounter = '${escapeHtml(String(counter))}';
+    
+    // Poll for updates
+    if (widgetId) {
+      setInterval(async () => {
+        try {
+          const res = await fetch('/api/widgets/' + widgetId + '/data.json');
+          const data = await res.json();
+          if (data && data.ticketQueue) {
+            const currentObj = data.ticketQueue.current;
+            if (currentObj && (currentObj.ticket !== lastTicket || currentObj.counter !== lastCounter)) {
+              // Update DOM
+              document.getElementById('currentTicket').innerText = currentObj.ticket;
+              document.getElementById('currentCounter').innerText = currentObj.counter;
+              lastTicket = currentObj.ticket;
+              lastCounter = currentObj.counter;
+              
+              // Play sound
+              const audio = document.getElementById('chimeAudio');
+              if (audio) {
+                audio.currentTime = 0;
+                audio.play().catch(e => console.warn('Audio play blocked:', e));
+              }
+              
+              // Flash effect
+              document.body.style.opacity = '0.5';
+              setTimeout(() => document.body.style.opacity = '1', 100);
+              setTimeout(() => document.body.style.opacity = '0.5', 200);
+              setTimeout(() => document.body.style.opacity = '1', 300);
+              
+              // Update history
+              if (data.ticketQueue.lastCalled) {
+                document.getElementById('historyList').innerHTML = data.ticketQueue.lastCalled.map(t => 
+                  '<div class="history-item"><span class="h-ticket">' + t.ticket + '</span><span class="h-counter">' + (t.counter||'') + '</span></div>'
+                ).join('');
+              }
+            }
+          }
+        } catch(e) {}
+      }, 2000);
+    }
+  </script>
 </body>
 </html>`;
 }

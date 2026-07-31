@@ -357,8 +357,9 @@ export async function render(container) {
   let dirState = { categories: [], logo_url: '', background_images: [] };
   let rolloverState = { messages: [] };
   let menuState = { sections: [] };
-  let propertyState = { properties: [] };
+  let propSlideState = { properties: [] };
   let biState = { metrics: [] };
+  let tqState = { counters: [] };
   // Cached widget list from the last load — used to populate the directory-search
   // source-board dropdown without a second fetch.
   let loadedWidgets = [];
@@ -572,18 +573,30 @@ export async function render(container) {
         `;
         break;
       case 'ticket-queue':
+        tqState.counters = Array.isArray(config.counters) ? JSON.parse(JSON.stringify(config.counters)) : [{ id: crypto.randomUUID ? crypto.randomUUID() : 'b1', label: 'Balcão 1', short_code: '' }];
         html += `
           <div class="form-group" style="display:flex;gap:12px;flex-wrap:wrap">
-            <div style="flex:1;min-width:140px"><label>Nome do Balcão</label><input type="text" id="wTicketCounter" class="input" value="${escAttr(config.counterName || 'Balcão 1')}"></div>
+            <div style="flex:2;min-width:140px"><label>Nome do Estabelecimento</label><input type="text" id="wTqEst" class="input" value="${escAttr(config.establishment_name || '')}" placeholder="Opcional"></div>
             <div style="flex:1;min-width:140px"><label>Cor Principal</label><input type="color" id="wTicketColor" value="${config.color || '#e53935'}" style="width:100%;height:32px;border:none;background:none;padding:0"></div>
           </div>
-          <div class="form-group">
+          <div class="form-group"><label>Balcões</label><div id="wTqBox"></div><button type="button" class="btn btn-secondary btn-sm" id="wTqAddBtn" style="margin-top:8px">+ Adicionar Balcão</button></div>
+          <div class="form-group" style="display:flex; gap:16px;">
             <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-              <input type="checkbox" id="wTicketSound" ${config.soundEnabled ? 'checked' : ''}> Som de Notificação
+              <input type="checkbox" id="wTicketSound" ${config.soundEnabled !== false ? 'checked' : ''}> Som (Display)
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" id="wTicketNotif" ${config.notificationEnabled !== false ? 'checked' : ''}> Notificar (Mobile)
             </label>
           </div>
+          <div class="form-group">
+            <label>Modo de Operação</label>
+            <select id="wTqMode" class="input" style="background:var(--bg-input)">
+              <option value="auto" ${config.call_mode === 'auto' ? 'selected' : ''}>Automático / Público</option>
+              <option value="manual" ${config.call_mode === 'manual' ? 'selected' : ''}>Manual / Apenas Display</option>
+            </select>
+          </div>
           <div style="font-size:12px;color:var(--text-muted);margin-top:8px">
-            Nota: As senhas são incrementadas através de pedidos POST para a API do widget (<code>/api/widgets/:id/ticket-queue/call</code>).
+            Nota: O display vai exibir um QR Code caso o Modo seja Automático.
           </div>
         `;
         break;
@@ -685,6 +698,7 @@ export async function render(container) {
     if (type === 'daily-menu') renderMenu();
     if (type === 'property-slide') renderProperty();
     if (type === 'bi-dashboard') renderBiMetrics();
+    if (type === 'ticket-queue') renderTqCounters();
   }
 
   // Live transition picker: a CHECKLIST of effects (pick one or several — the player randomizes among
@@ -1119,6 +1133,29 @@ export async function render(container) {
     };
   }
 
+  function renderTqCounters() {
+    const box = document.getElementById('wTqBox');
+    const addBtn = document.getElementById('wTqAddBtn');
+    if (!box || !addBtn) return;
+    
+    box.innerHTML = tqState.counters.map((c, i) => `
+      <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center;">
+        <input type="text" class="input tq-label" data-idx="${i}" value="${escAttr(c.label)}" placeholder="Nome (ex: Balcão 1)" style="flex:2">
+        <input type="text" class="input tq-code" data-idx="${i}" value="${escAttr(c.short_code)}" placeholder="Código (ex: B1)" style="flex:1">
+        <button type="button" class="btn btn-danger btn-sm tq-del" data-idx="${i}">X</button>
+      </div>
+    `).join('');
+    
+    document.querySelectorAll('.tq-label').forEach(i => i.oninput = (e) => { tqState.counters[+e.target.dataset.idx].label = e.target.value; });
+    document.querySelectorAll('.tq-code').forEach(i => i.oninput = (e) => { tqState.counters[+e.target.dataset.idx].short_code = e.target.value; });
+    document.querySelectorAll('.tq-del').forEach(b => b.onclick = (e) => { tqState.counters.splice(+e.target.dataset.idx, 1); renderTqCounters(); });
+    
+    addBtn.onclick = () => {
+      tqState.counters.push({ id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2,9), label: '', short_code: '' });
+      renderTqCounters();
+    };
+  }
+
   // Property slide renderers
   function renderProperty() {
     const box = document.getElementById('wPropBox');
@@ -1298,9 +1335,12 @@ export async function render(container) {
         color: val('wClockColor')
       }); break;
       case 'ticket-queue': Object.assign(config, {
-        counterName: val('wTicketCounter'),
-        color: val('wTicketColor'),
-        soundEnabled: document.getElementById('wTicketSound')?.checked
+        establishment_name: document.getElementById('wTqEst')?.value || '',
+        color: document.getElementById('wTicketColor')?.value,
+        soundEnabled: document.getElementById('wTicketSound')?.checked,
+        notificationEnabled: document.getElementById('wTicketNotif')?.checked,
+        call_mode: document.getElementById('wTqMode')?.value || 'auto',
+        counters: tqState.counters
       }); break;
       case 'bi-dashboard': Object.assign(config, {
         metrics: biState.metrics.map(m => ({ title: m.title, value: m.value, change: m.change }))

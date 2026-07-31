@@ -617,7 +617,7 @@ VALUES
   ('tpl-mc-1', 'modern-clock', 'Relógio Escuro', 'general', 'Relógio moderno com fundo escuro.', 
     '{"mode":"24h","tz":"Europe/Lisbon","theme":"dark","color":"#7aa2ff"}', 8),
   ('tpl-tq-1', 'ticket-queue', 'Fila Única', 'general', 'Gestão de filas simples.', 
-    '{"counterName":"Balcão 1","color":"#e53935","soundEnabled":true,"currentTicket":"000","lastCalled":[]}', 9),
+    '{"establishment_name":"Loja Central","call_mode":"auto","counters":[{"id":"b1","label":"Balcão 1","short_code":"B1"},{"id":"b2","label":"Caixa","short_code":"CX"}],"color":"#e53935","soundEnabled":true,"notificationEnabled":true,"currentTicket":"000","lastCalled":[]}', 9),
   ('tpl-bi-1', 'bi-dashboard', 'Vendas Diárias', 'dashboard', 'Dashboard simples de vendas.', 
     '{"metrics":[{"title":"Vendas Hoje","value":"€4.250","change":"+12%"},{"title":"Visitas","value":"1.432","change":"+5%"},{"title":"Conversão","value":"3.2%","change":"-1.1%"}]}', 10);
 
