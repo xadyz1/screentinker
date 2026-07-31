@@ -34,6 +34,34 @@ const app = document.getElementById('app');
 const sidebar = document.querySelector('.sidebar');
 let currentView = null;
 
+// ==================== Theme Initialization ====================
+function updateDashboardThemeIcon() {
+  const themeIcon = document.getElementById('dashboard-theme-icon');
+  if (!themeIcon) return;
+  const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+  if (currentTheme === 'light') {
+    themeIcon.classList.remove('fa-moon');
+    themeIcon.classList.add('fa-sun');
+  } else {
+    themeIcon.classList.remove('fa-sun');
+    themeIcon.classList.add('fa-moon');
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  updateDashboardThemeIcon();
+  const toggleBtn = document.getElementById('dashboard-theme-toggle');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', () => {
+      let currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+      let newTheme = currentTheme === 'light' ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', newTheme);
+      localStorage.setItem('screentinker_theme', newTheme);
+      updateDashboardThemeIcon();
+    });
+  }
+});
+
 // ==================== Slice 2C: accept-invite plumbing ====================
 //
 // Flow shape (covers all six auth entry points - login, register, support,

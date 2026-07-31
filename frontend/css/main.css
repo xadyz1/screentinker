@@ -651,7 +651,7 @@ html, body {
 
 .btn-danger {
   background: var(--danger-dim);
-  color: #fca5a5;
+  color: var(--danger);
 }
 
 .btn-danger:hover {
@@ -1258,7 +1258,7 @@ html, body {
 
 .device-status-badge.offline {
   background: var(--danger-dim);
-  color: #fca5a5;
+  color: var(--danger);
 }
 
 .device-status-badge.provisioning {

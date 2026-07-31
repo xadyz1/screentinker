@@ -24,6 +24,17 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <script src="/socket.io/socket.io.js"></script>
   <!-- OAuth providers loaded on-demand by login.js when needed -->
+  <script>
+    // FOUC prevention and theme initialization
+    (function() {
+      const savedTheme = localStorage.getItem('screentinker_theme');
+      if (savedTheme === 'light' || savedTheme === 'dark') {
+        document.documentElement.setAttribute('data-theme', savedTheme);
+      } else {
+        document.documentElement.setAttribute('data-theme', 'dark'); // Default
+      }
+    })();
+  </script>
 </head>
 
 <body>
@@ -193,6 +204,11 @@
         </a></li>
     </ul>
     <div class="sidebar-footer">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <button id="dashboard-theme-toggle" class="btn btn-outline" style="padding: 4px 8px; font-size: 14px; cursor: pointer; background: transparent; border: 1px solid var(--border); color: var(--text-secondary); border-radius: var(--radius-sm);" aria-label="Toggle Theme">
+          <i class="fa-solid fa-moon" id="dashboard-theme-icon"></i>
+        </button>
+      </div>
       <div class="connection-status" id="connectionStatus">
         <span class="status-dot offline"></span>
         <span>Disconnected</span>
