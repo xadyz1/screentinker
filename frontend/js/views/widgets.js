@@ -1411,7 +1411,7 @@ export async function render(container) {
       showConfigForm(type, {});
     };
     
-    document.getElementById('widgetModal').style.display = 'block';
+    document.getElementById('widgetModal').style.display = 'flex';
   }
 
   loadWidgets();
