@@ -23,13 +23,74 @@ async function renderList(container) {
       </button>
     </div>
     <div class="content-grid" id="kioskGrid"></div>
+    <!-- Kiosk Template Gallery Modal -->
+    <div class="modal-overlay" id="kioskModal" style="display:none">
+      <div class="modal" style="width:800px; max-width:95vw; height:80vh; display:flex; flex-direction:column">
+        <div class="modal-header">
+          <h3>${t('kiosk.new_page', 'New Kiosk Page')} - ${t('common.templates', 'Templates')}</h3>
+          <button class="btn-icon" onclick="document.getElementById('kioskModal').style.display='none'">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="modal-body" style="flex:1; overflow-y:auto; padding:20px; background:var(--bg-primary)">
+          <div id="kioskTemplateList" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(240px, 1fr));gap:16px;"></div>
+        </div>
+      </div>
+    </div>
   `;
 
   document.getElementById('newKioskBtn').onclick = async () => {
-    const name = prompt(t('kiosk.prompt_name'));
-    if (!name) return;
-    const page = await API('/kiosk', { method: 'POST', body: JSON.stringify({ name }) });
-    window.location.hash = `#/kiosk/${page.id}`;
+    document.getElementById('kioskModal').style.display = 'flex';
+    const listEl = document.getElementById('kioskTemplateList');
+    listEl.innerHTML = '<div style="color:var(--text-muted)">Loading templates...</div>';
+    
+    try {
+      const templates = await API('/kiosk/kiosk-templates');
+      
+      let html = \`
+        <div class="content-item" style="cursor:pointer;border:2px dashed var(--border);background:var(--bg-panel);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:30px 20px;text-align:center" id="btnBlankKiosk">
+          <div style="font-size:24px;margin-bottom:8px;color:var(--text-muted)">+</div>
+          <div style="font-weight:600;font-size:14px">\${t('widget.template.blank', 'Começar em branco')}</div>
+        </div>
+      \`;
+      
+      templates.forEach(tpl => {
+        html += \`
+          <div class="content-item template-card" style="cursor:pointer;position:relative" data-template-id="\${esc(tpl.id)}">
+            <div style="padding:16px;display:flex;flex-direction:column;height:100%">
+              <div style="font-weight:600;font-size:15px;margin-bottom:6px">\${esc(tpl.name)}</div>
+              <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px">\${esc(tpl.category)}</div>
+              <div style="font-size:13px;color:var(--text);flex:1;line-height:1.4">\${esc(tpl.description || '')}</div>
+              <div style="margin-top:16px;color:var(--accent);font-size:13px;font-weight:500">Usar Template &rarr;</div>
+            </div>
+          </div>
+        \`;
+      });
+      
+      listEl.innerHTML = html;
+      
+      document.getElementById('btnBlankKiosk').onclick = async () => {
+        const name = prompt(t('kiosk.prompt_name'));
+        if (!name) return;
+        const page = await API('/kiosk', { method: 'POST', body: JSON.stringify({ name }) });
+        document.getElementById('kioskModal').style.display = 'none';
+        window.location.hash = \`#/kiosk/\${page.id}\`;
+      };
+      
+      listEl.querySelectorAll('.template-card').forEach(card => {
+        card.onclick = async () => {
+          const tpl = templates.find(t => t.id === card.dataset.templateId);
+          if (!tpl) return;
+          const name = prompt(t('kiosk.prompt_name'), tpl.name);
+          if (!name) return;
+          const page = await API('/kiosk', { method: 'POST', body: JSON.stringify({ name, config: tpl.config_json }) });
+          document.getElementById('kioskModal').style.display = 'none';
+          window.location.hash = \`#/kiosk/\${page.id}\`;
+        };
+      });
+    } catch (err) {
+      listEl.innerHTML = \`<div style="color:var(--danger)">Failed to load templates: \${esc(err.message)}</div>\`;
+    }
   };
 
   try {

@@ -37,6 +37,16 @@ router.get('/', (req, res) => {
   res.json(pages);
 });
 
+router.get('/kiosk-templates', (req, res) => {
+  try {
+    const templates = db.prepare('SELECT * FROM kiosk_templates WHERE is_active = 1 ORDER BY sort_order ASC, name ASC').all();
+    res.json(templates);
+  } catch (err) {
+    console.error('Error fetching kiosk templates:', err);
+    res.status(500).json({ error: 'Failed to fetch kiosk templates' });
+  }
+});
+
 // Phase 2.2e: workspace-aware access. Mirrors widgets/content helpers.
 // Platform-template kiosks (workspace_id IS NULL) are readable by anyone
 // authenticated and writable only by platform_admin.

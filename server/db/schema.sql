@@ -621,6 +621,27 @@ VALUES
   ('tpl-bi-1', 'bi-dashboard', 'Vendas Diárias', 'dashboard', 'Dashboard simples de vendas.', 
     '{"metrics":[{"title":"Vendas Hoje","value":"€4.250","change":"+12%"},{"title":"Visitas","value":"1.432","change":"+5%"},{"title":"Conversão","value":"3.2%","change":"-1.1%"}]}', 10);
 
+-- ===================== KIOSK TEMPLATES =====================
+CREATE TABLE IF NOT EXISTS kiosk_templates (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    category        TEXT NOT NULL,
+    description     TEXT,
+    config_json     TEXT NOT NULL,
+    thumbnail_url   TEXT,
+    sort_order      INTEGER NOT NULL DEFAULT 0,
+    is_active       INTEGER NOT NULL DEFAULT 1,
+    created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+
+INSERT OR IGNORE INTO kiosk_templates (id, name, category, description, config_json, sort_order)
+VALUES
+  ('tpl-k-1', 'Ticket Queue', 'service', 'Sistema de senhas com QR Code', '{"style":{"theme":"light","color":"#e53935"},"buttons":[{"id":"b1","label":"Tirar Senha","action":"url","url":"/public/q"}]}', 1),
+  ('tpl-k-2', 'Welcome Screen', 'reception', 'Ecrã de boas vindas com check-in', '{"style":{"theme":"dark","color":"#7aa2ff"},"buttons":[{"id":"b1","label":"Check-in","action":"page","page":"check-in"},{"id":"b2","label":"Informações","action":"page","page":"info"}]}', 2),
+  ('tpl-k-3', 'Interactive Menu', 'restaurant', 'Menu interativo com categorias', '{"style":{"theme":"rustic","color":"#f59e0b"},"buttons":[{"id":"b1","label":"Pratos Principais","action":"page","page":"pratos"},{"id":"b2","label":"Bebidas","action":"page","page":"bebidas"},{"id":"b3","label":"Sobremesas","action":"page","page":"sobremesas"}]}', 3),
+  ('tpl-k-4', 'Directory', 'corporate', 'Diretório e navegação de edifício', '{"style":{"theme":"light","color":"#3b82f6"},"buttons":[{"id":"b1","label":"Piso 1","action":"page","page":"p1"},{"id":"b2","label":"Piso 2","action":"page","page":"p2"}]}', 4),
+  ('tpl-k-5', 'Promo Page', 'retail', 'Página promocional simples', '{"style":{"theme":"dark","color":"#10b981"},"buttons":[{"id":"b1","label":"Ver Promoções","action":"page","page":"promos"}]}', 5);
+
 -- ===================== SCHEMA MIGRATIONS =====================
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
