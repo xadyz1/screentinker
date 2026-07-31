@@ -5,7 +5,7 @@ import * as contentLibrary from './views/content-library.js';
 import * as settings from './views/settings.js';
 import * as login from './views/login.js';
 import * as billing from './views/billing.js';
-import * as layoutEditor from './views/layout-editor.js';
+
 import * as schedule from './views/schedule.js';
 import * as widgets from './views/widgets.js';
 import * as videoWall from './views/video-wall.js';
@@ -426,7 +426,7 @@ function route() {
     else if (hash.startsWith('#/content') && link.dataset.view === 'content') link.classList.add('active');
     else if (hash.startsWith('#/settings') && link.dataset.view === 'settings') link.classList.add('active');
     else if (hash.startsWith('#/billing') && link.dataset.view === 'billing') link.classList.add('active');
-    else if ((hash.startsWith('#/layout') || hash === '#/layouts') && link.dataset.view === 'layouts') link.classList.add('active');
+
     else if ((hash === '#/playlists' || hash.startsWith('#/playlists/')) && link.dataset.view === 'playlists') link.classList.add('active');
     else if (hash === '#/schedule' && link.dataset.view === 'schedule') link.classList.add('active');
     else if (hash === '#/widgets' && link.dataset.view === 'widgets') link.classList.add('active');
@@ -455,8 +455,8 @@ function route() {
     currentView = playlists;
     playlists.render(app);
   } else if (hash === '#/layouts' || hash.startsWith('#/layout/')) {
-    currentView = layoutEditor;
-    layoutEditor.render(app);
+    window.location.hash = hash.replace('#/layout', '#/designer');
+    return;
   } else if (hash === '#/schedule') {
     currentView = schedule;
     schedule.render(app);

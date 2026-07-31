@@ -2,8 +2,23 @@ import { showToast } from '../components/toast.js';
 import { t } from '../i18n.js';
 import { hydrateAuthImages } from '../utils.js';
 
-const API = (url, opts = {}) => fetch('/api' + url, { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}`, ...opts.headers }, ...opts }).then(r => r.json());
-
+const API = async (url, opts = {}) => {
+  const wsId = localStorage.getItem('active_workspace_id');
+  const res = await fetch('/api' + url, {
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${localStorage.getItem('token')}`,
+      ...(wsId ? { 'X-Workspace-Id': wsId } : {}),
+      ...opts.headers
+    },
+    ...opts
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || 'Request failed');
+  }
+  return res.json();
+};
 // Widget type ids only — name + desc are looked up via t() so they switch
 // language with the rest of the UI.
 const WIDGET_TYPES = ['clock', 'weather', 'rss', 'text', 'webpage', 'social', 'directory-board', 'directory-search', 'transition', 'crypto', 'world-clock', 'rollover-text', 'daily-menu', 'property-slide', 'modern-clock', 'ticket-queue', 'bi-dashboard'];
@@ -1407,9 +1422,14 @@ export async function render(container) {
     if (!type) return;
     const config = getConfigFromForm(type);
     try {
+      const wsId = localStorage.getItem('active_workspace_id');
       const res = await fetch('/api/widgets/preview-session', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
+        headers: { 
+          'Content-Type': 'application/json', 
+          Authorization: `Bearer ${localStorage.getItem('token')}`,
+          ...(wsId ? { 'X-Workspace-Id': wsId } : {})
+        },
         body: JSON.stringify({ widget_type: type, config }),
       });
       if (!res.ok) throw new Error(t('widget.toast.preview_failed'));

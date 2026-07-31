@@ -184,8 +184,16 @@ router.put('/:id', (req, res) => {
   if (!widget) return;
 
   const { name, config } = req.body;
-  if (name) db.prepare('UPDATE widgets SET name = ?, updated_at = strftime(\'%s\',\'now\') WHERE id = ?').run(name, req.params.id);
-  if (config) db.prepare('UPDATE widgets SET config = ?, updated_at = strftime(\'%s\',\'now\') WHERE id = ?').run(JSON.stringify(config), req.params.id);
+  if (name !== undefined) db.prepare('UPDATE widgets SET name = ?, updated_at = strftime(\'%s\',\'now\') WHERE id = ?').run(name, req.params.id);
+  if (config !== undefined) db.prepare('UPDATE widgets SET config = ?, updated_at = strftime(\'%s\',\'now\') WHERE id = ?').run(JSON.stringify(config), req.params.id);
+
+  const affectedPlaylists = db.prepare('SELECT DISTINCT playlist_id FROM playlist_items WHERE widget_id = ?').all(req.params.id);
+  if (affectedPlaylists.length > 0) {
+    const { publishPlaylist } = require('./playlists');
+    for (const row of affectedPlaylists) {
+      publishPlaylist(row.playlist_id, req);
+    }
+  }
 
   res.json(db.prepare('SELECT * FROM widgets WHERE id = ?').get(req.params.id));
 });
