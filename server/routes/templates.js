@@ -119,4 +119,25 @@ router.delete('/:id', requireAuth, (req, res) => {
   res.json({ success: true });
 });
 
+// POST /api/templates/:id/clone
+// Clone a template to the user's workspace
+router.post('/:id/clone', requireAuth, (req, res) => {
+  const current = db.prepare('SELECT * FROM templates WHERE id = ?').get(req.params.id);
+  if (!current) {
+    return res.status(404).json({ error: 'Template not found' });
+  }
+
+  const id = `tpl-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  const workspaceId = req.user.current_workspace_id || null;
+  const newName = current.name + ' (Copy)';
+  
+  db.prepare(`
+    INSERT INTO templates (id, workspace_id, name, category, description, orientation, document, tags, thumbnail_url, is_public)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+  `).run(id, workspaceId, newName, current.category, current.description, current.orientation, current.document, current.tags, current.thumbnail_url);
+  
+  const cloned = db.prepare('SELECT * FROM templates WHERE id = ?').get(id);
+  res.status(201).json(cloned);
+});
+
 module.exports = router;

@@ -2113,3 +2113,35 @@ html, body {
     grid-template-columns: 1fr 1fr;
   }
 }
+/* Editor Specifics & Moveable.js Overrides */
+.template-editor {
+  --editor-primary: #f97316;
+  --editor-bg: #e2e8f0;
+}
+.moveable-control-box {
+  z-index: 9999 !important;
+}
+.moveable-line {
+  background: var(--editor-primary) !important;
+  width: 2px !important;
+}
+.moveable-control {
+  background: white !important;
+  border: 2px solid var(--editor-primary) !important;
+  width: 12px !important;
+  height: 12px !important;
+  margin-left: -6px !important;
+  margin-top: -6px !important;
+  border-radius: 50% !important;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2) !important;
+}
+.drag-preset:hover {
+  border-color: var(--editor-primary) !important;
+  color: var(--editor-primary);
+}
+.drag-preset svg {
+  transition: stroke 0.2s;
+}
+.drag-preset:hover svg {
+  stroke: var(--editor-primary);
+}
