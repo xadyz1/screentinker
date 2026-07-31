@@ -140,7 +140,17 @@ export const api = {
 
   // Widgets
   getWidgets: () => request('/widgets'),
-  getWidget: (id) => request('/widgets/' + id),
+  getAIWidgets: () => request('/ai/widgets'),
+  getLayoutTemplates: () => request('/layouts/templates'),
+  createLayoutFromTemplate: (templateId) => request('/layouts/from-template', { method: 'POST', body: JSON.stringify({ template_id: templateId }) }),
+  getWidgetTemplates: () => request('/widgets/widget-templates'),
+
+  // Tickets
+  getTickets: () => request('/tickets'),
+  createTicketCounter: (data) => request('/tickets', { method: 'POST', body: JSON.stringify(data) }),
+  updateTicketCounter: (id, data) => request(`/tickets/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteTicketCounter: (id) => request(`/tickets/${id}`, { method: 'DELETE' }),
+  callTicket: (id) => request(`/tickets/${id}/call`, { method: 'POST' }),
 
   // Device Groups
   getGroups: () => request('/groups'),

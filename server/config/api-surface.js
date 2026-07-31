@@ -37,6 +37,7 @@ const PUBLIC_ROUTERS = [
   { path: '/api/activity',    mod: './routes/activity' },
   { path: '/api/kiosk',       mod: './routes/kiosk', renderBypass: true },
   { path: '/api/pip',         mod: './routes/pip' },
+  { path: '/api/tickets',     mod: './routes/tickets' },
 ];
 
 const JWT_ONLY_ROUTERS = [

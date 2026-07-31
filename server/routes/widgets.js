@@ -190,46 +190,6 @@ router.put('/:id', (req, res) => {
   res.json(db.prepare('SELECT * FROM widgets WHERE id = ?').get(req.params.id));
 });
 
-// Call next ticket for ticket-queue
-router.post('/:id/ticket-queue/call', express.json(), (req, res) => {
-  const widget = checkWidgetWrite(req, res);
-  if (!widget) return;
-  if (widget.widget_type !== 'ticket-queue') {
-    return res.status(400).json({ error: 'Widget is not a ticket-queue' });
-  }
-  
-  let config = {};
-  try { config = JSON.parse(widget.config); } catch (e) {}
-  
-  const body = req.body || {};
-  let current = parseInt(config.currentTicket) || 0;
-  let counterName = config.counterName || 'Balcão 1';
-  
-  // If specific ticket/counter is passed (from a public queue system)
-  if (body.ticket) {
-    current = parseInt(body.ticket) || current;
-  } else {
-    current++;
-  }
-  if (body.counter) {
-    counterName = body.counter;
-  }
-  
-  const formatted = current.toString().padStart(3, '0');
-  
-  const lastCalled = Array.isArray(config.lastCalled) ? config.lastCalled : [];
-  if (config.currentTicket) {
-    lastCalled.unshift({ ticket: config.currentTicket, counter: config.counterName || 'Balcão 1' });
-    if (lastCalled.length > 5) lastCalled.pop();
-  }
-  
-  config.currentTicket = formatted;
-  config.counterName = counterName;
-  config.lastCalled = lastCalled;
-  
-  db.prepare("UPDATE widgets SET config = ?, updated_at = strftime('%s','now') WHERE id = ?").run(JSON.stringify(config), req.params.id);
-  res.json({ success: true, currentTicket: formatted, counter: counterName, lastCalled });
-});
 
 // Delete widget
 router.delete('/:id', (req, res) => {
@@ -538,9 +498,20 @@ router.get('/:id/data.json', (req, res) => {
     if (widget.widget_type === 'directory-board') {
       payload.categories = Array.isArray(cfg.categories) ? cfg.categories : [];
     } else if (widget.widget_type === 'ticket-queue') {
+      let ticket = '000';
+      let counterName = 'Balcão';
+      let lastCalled = [];
+      if (cfg.counter_id) {
+        const counter = db.prepare('SELECT * FROM ticket_counters WHERE id = ?').get(cfg.counter_id);
+        if (counter) {
+          ticket = counter.current_ticket || '000';
+          counterName = counter.name || 'Balcão';
+          try { lastCalled = JSON.parse(counter.last_called_json || '[]'); } catch (e) {}
+        }
+      }
       payload.ticketQueue = {
-        current: { ticket: cfg.currentTicket || '000', counter: cfg.counterName || 'Balcão 1' },
-        lastCalled: Array.isArray(cfg.lastCalled) ? cfg.lastCalled : []
+        current: { ticket, counter: counterName },
+        lastCalled: lastCalled
       };
     } else {
       return res.status(404).json({ error: 'Widget type not supported for data.json' });
@@ -1753,13 +1724,28 @@ function renderModernClock(config) {
 }
 
 function renderTicketQueue(config, widgetId) {
-  const current = config.currentTicket || '000';
-  const lastCalled = Array.isArray(config.lastCalled) ? config.lastCalled : [];
-  const counter = config.counterName || 'Balcão 1';
-  const color = safeCss(config.color, '#e53935');
-  const estName = config.establishment_name || '';
-  const counters = Array.isArray(config.counters) ? config.counters : [{ label: counter }];
   const mode = config.call_mode || 'auto';
+  
+  let ticket = '000';
+  let lastCalled = [];
+  let counterName = 'Geral';
+  let color = safeCss(config.color, '#e53935');
+  let estName = config.establishment_name || '';
+  let logoUrl = '';
+  
+  if (config.counter_id) {
+    try {
+      const counter = db.prepare('SELECT * FROM ticket_counters WHERE id = ?').get(config.counter_id);
+      if (counter) {
+        ticket = counter.current_ticket || '000';
+        counterName = counter.name;
+        color = safeCss(counter.color || color, '#e53935');
+        logoUrl = counter.logo_url || '';
+        if (!estName) estName = counter.description || '';
+        try { lastCalled = JSON.parse(counter.last_called_json || '[]'); } catch (e) {}
+      }
+    } catch (e) {}
+  }
   
   // Public URL for taking a ticket
   const publicUrl = widgetId ? `/public/q/${widgetId}` : '';
@@ -1770,38 +1756,59 @@ function renderTicketQueue(config, widgetId) {
 <head>
   <meta charset="utf-8">
   <style>
-    html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; background: #000; color: #fff; font-family: system-ui, sans-serif; display: flex; overflow: hidden; }
-    .left { flex: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; background: ${escapeHtml(color)}; position: relative; }
-    .est-name { position: absolute; top: 3vh; font-size: 3vw; font-weight: bold; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.8; text-align: center; width: 100%; }
-    .right { flex: 1; display: flex; flex-direction: column; background: #111; border-left: 5px solid #222; }
-    .title { font-size: 4vw; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.9; margin-top: 5vh; }
-    .ticket { font-size: 20vw; font-weight: 900; line-height: 1; margin: 2vh 0; }
-    .counter { font-size: 5vw; font-weight: bold; }
+    html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; background: #0b0f19; color: #fff; font-family: system-ui, sans-serif; display: flex; overflow: hidden; }
     
-    .bottom-qr { position: absolute; bottom: 3vh; left: 3vh; display: flex; align-items: center; gap: 2vw; background: rgba(0,0,0,0.3); padding: 1vw; border-radius: 1vw; }
-    .bottom-qr img { width: 10vw; height: 10vw; border-radius: 0.5vw; background: #fff; padding: 0.5vw; }
-    .bottom-qr .qr-text { font-size: 1.5vw; font-weight: bold; max-width: 15vw; line-height: 1.3; }
+    .left { flex: 5; display: flex; flex-direction: column; position: relative; background: linear-gradient(135deg, rgba(255,255,255,0.03), transparent); }
+    .header { padding: 4vh; display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid rgba(255,255,255,0.05); }
+    .brand { display: flex; align-items: center; gap: 2vw; }
+    .brand img { max-height: 8vh; max-width: 20vw; object-fit: contain; }
+    .brand-text { display: flex; flex-direction: column; }
+    .counter-name { font-size: 4vw; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; line-height: 1; color: ${escapeHtml(color)}; }
+    .est-name { font-size: 1.5vw; color: #8b96ad; margin-top: 0.5vh; }
     
-    .history-title { padding: 3vh; font-size: 3vw; background: #222; text-align: center; font-weight: bold; }
+    .main-content { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+    .title { font-size: 3vw; text-transform: uppercase; letter-spacing: 0.2em; opacity: 0.6; margin-bottom: 2vh; font-weight: 600; }
+    .ticket-box { background: ${escapeHtml(color)}; padding: 2vh 8vw; border-radius: 4vh; box-shadow: 0 20px 50px rgba(0,0,0,0.5), inset 0 2px 0 rgba(255,255,255,0.2); text-align: center; }
+    .ticket { font-size: 22vw; font-weight: 900; line-height: 1; letter-spacing: -0.02em; text-shadow: 0 10px 20px rgba(0,0,0,0.3); }
+    
+    .right { flex: 2; display: flex; flex-direction: column; background: #121826; border-left: 1px solid rgba(255,255,255,0.05); }
+    .history-title { padding: 4vh; font-size: 2vw; text-transform: uppercase; letter-spacing: 0.1em; color: #8b96ad; font-weight: 700; border-bottom: 1px solid rgba(255,255,255,0.05); }
     .history-list { flex: 1; display: flex; flex-direction: column; }
-    .history-item { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 5vw; font-weight: bold; border-bottom: 2px solid #222; gap: 2vw; }
-    .history-item .h-ticket { font-size: 6vw; }
-    .history-item .h-counter { font-size: 2vw; opacity: 0.7; }
+    .history-item { flex: 1; display: flex; align-items: center; padding: 0 4vh; border-bottom: 1px solid rgba(255,255,255,0.02); gap: 3vw; }
+    .history-item .h-ticket { font-size: 5vw; font-weight: 800; color: #fff; width: 12vw; }
+    .history-item .h-counter { font-size: 1.8vw; color: #8b96ad; font-weight: 500; }
+    
+    .bottom-qr { position: absolute; bottom: 4vh; left: 4vh; display: flex; align-items: center; gap: 2vw; background: rgba(0,0,0,0.4); padding: 1.5vh 2vw; border-radius: 2vh; border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(10px); }
+    .bottom-qr img { width: 8vw; height: 8vw; border-radius: 1vh; background: #fff; padding: 0.5vw; }
+    .bottom-qr .qr-text { font-size: 1.2vw; font-weight: 600; max-width: 14vw; line-height: 1.4; color: #e8eefc; }
   </style>
 </head>
 <body>
   <div class="left">
-    ${estName ? `<div class="est-name">${escapeHtml(estName)}</div>` : ''}
-    <div class="title">Senha Atual</div>
-    <div class="ticket" id="currentTicket">${escapeHtml(String(current))}</div>
-    <div class="counter" id="currentCounter">${escapeHtml(counter)}</div>
+    <div class="header">
+      <div class="brand">
+        ${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="Logo">` : ''}
+        <div class="brand-text">
+          <div class="counter-name" id="currentCounter">${escapeHtml(counterName)}</div>
+          ${estName ? `<div class="est-name">${escapeHtml(estName)}</div>` : ''}
+        </div>
+      </div>
+    </div>
+    
+    <div class="main-content">
+      <div class="title">Senha Atual</div>
+      <div class="ticket-box">
+        <div class="ticket" id="currentTicket">${escapeHtml(String(ticket))}</div>
+      </div>
+    </div>
     
     ${mode === 'auto' && widgetId ? `
     <div class="bottom-qr">
       <img src="${qrUrl}" alt="QR Code">
-      <div class="qr-text">Faça scan para tirar a sua senha</div>
+      <div class="qr-text">Faça scan com o telemóvel para tirar senha</div>
     </div>` : ''}
   </div>
+  
   <div class="right">
     <div class="history-title">Últimas Chamadas</div>
     <div class="history-list" id="historyList">
@@ -1822,8 +1829,8 @@ function renderTicketQueue(config, widgetId) {
   
   <script>
     const widgetId = '${escapeHtml(widgetId)}';
-    let lastTicket = '${escapeHtml(String(current))}';
-    let lastCounter = '${escapeHtml(String(counter))}';
+    let lastTicket = '${escapeHtml(String(ticket))}';
+    let lastCounter = '${escapeHtml(String(counterName))}';
     
     // Poll for updates
     if (widgetId) {

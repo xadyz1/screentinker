@@ -366,6 +366,7 @@ export async function render(container) {
   // Cached widget list from the last load — used to populate the directory-search
   // source-board dropdown without a second fetch.
   let loadedWidgets = [];
+  let loadedTicketCounters = [];
 
   document.getElementById('newWidgetBtn').onclick = () => {
     const grid = document.getElementById('widgetTypeGrid');
@@ -595,14 +596,14 @@ export async function render(container) {
           </div>
         `;
         break;
-      case 'ticket-queue':
-        tqState.counters = Array.isArray(config.counters) ? JSON.parse(JSON.stringify(config.counters)) : [{ id: crypto.randomUUID ? crypto.randomUUID() : 'b1', label: 'Balcão 1', short_code: '' }];
+      case 'ticket-queue': {
+        const countersField = loadedTicketCounters.length
+          ? `<select id="wTqCounter" class="input" style="background:var(--bg-input)">
+               ${loadedTicketCounters.map(c => `<option value="${escAttr(c.id)}" ${config.counter_id == c.id ? 'selected' : ''}>${escAttr(c.name)}</option>`).join('')}
+             </select>`
+          : `<div style="font-size:13px;color:var(--text-muted);padding:10px;border:1px dashed var(--border);border-radius:6px">Não existem balcões configurados. Crie um no menu Senhas primeiro.</div>`;
         html += `
-          <div class="form-group" style="display:flex;gap:12px;flex-wrap:wrap">
-            <div style="flex:2;min-width:140px"><label>Nome do Estabelecimento</label><input type="text" id="wTqEst" class="input" value="${escAttr(config.establishment_name || '')}" placeholder="Opcional"></div>
-            <div style="flex:1;min-width:140px"><label>Cor Principal</label><input type="color" id="wTicketColor" value="${config.color || '#e53935'}" style="width:100%;height:32px;border:none;background:none;padding:0"></div>
-          </div>
-          <div class="form-group"><label>Balcões</label><div id="wTqBox"></div><button type="button" class="btn btn-secondary btn-sm" id="wTqAddBtn" style="margin-top:8px">+ Adicionar Balcão</button></div>
+          <div class="form-group"><label>Balcão Associado</label>${countersField}</div>
           <div class="form-group" style="display:flex; gap:16px;">
             <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
               <input type="checkbox" id="wTicketSound" ${config.soundEnabled !== false ? 'checked' : ''}> Som (Display)
@@ -619,10 +620,11 @@ export async function render(container) {
             </select>
           </div>
           <div style="font-size:12px;color:var(--text-muted);margin-top:8px">
-            Nota: O display vai exibir um QR Code caso o Modo seja Automático.
+            Nota: O display vai exibir um QR Code caso o Modo seja Automático. As cores e logótipo são geridos no menu Senhas.
           </div>
         `;
         break;
+      }
       case 'bi-dashboard':
         biState.metrics = Array.isArray(config.metrics) ? JSON.parse(JSON.stringify(config.metrics)) : [];
         html += `
@@ -721,7 +723,7 @@ export async function render(container) {
     if (type === 'daily-menu') renderMenu();
     if (type === 'property-slide') renderProperty();
     if (type === 'bi-dashboard') renderBiMetrics();
-    if (type === 'ticket-queue') renderTqCounters();
+    if (type === 'bi-dashboard') renderBiMetrics();
   }
 
   // Live transition picker: a CHECKLIST of effects (pick one or several — the player randomizes among
@@ -1156,28 +1158,6 @@ export async function render(container) {
     };
   }
 
-  function renderTqCounters() {
-    const box = document.getElementById('wTqBox');
-    const addBtn = document.getElementById('wTqAddBtn');
-    if (!box || !addBtn) return;
-    
-    box.innerHTML = tqState.counters.map((c, i) => `
-      <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center;">
-        <input type="text" class="input tq-label" data-idx="${i}" value="${escAttr(c.label)}" placeholder="Nome (ex: Balcão 1)" style="flex:2">
-        <input type="text" class="input tq-code" data-idx="${i}" value="${escAttr(c.short_code)}" placeholder="Código (ex: B1)" style="flex:1">
-        <button type="button" class="btn btn-danger btn-sm tq-del" data-idx="${i}">X</button>
-      </div>
-    `).join('');
-    
-    document.querySelectorAll('.tq-label').forEach(i => i.oninput = (e) => { tqState.counters[+e.target.dataset.idx].label = e.target.value; });
-    document.querySelectorAll('.tq-code').forEach(i => i.oninput = (e) => { tqState.counters[+e.target.dataset.idx].short_code = e.target.value; });
-    document.querySelectorAll('.tq-del').forEach(b => b.onclick = (e) => { tqState.counters.splice(+e.target.dataset.idx, 1); renderTqCounters(); });
-    
-    addBtn.onclick = () => {
-      tqState.counters.push({ id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2,9), label: '', short_code: '' });
-      renderTqCounters();
-    };
-  }
 
   // Property slide renderers
   function renderProperty() {
@@ -1364,12 +1344,10 @@ export async function render(container) {
         color: val('wClockColor')
       }); break;
       case 'ticket-queue': Object.assign(config, {
-        establishment_name: document.getElementById('wTqEst')?.value || '',
-        color: document.getElementById('wTicketColor')?.value,
+        counter_id: document.getElementById('wTqCounter')?.value || '',
         soundEnabled: document.getElementById('wTicketSound')?.checked,
         notificationEnabled: document.getElementById('wTicketNotif')?.checked,
         call_mode: document.getElementById('wTqMode')?.value || 'auto',
-        counters: tqState.counters
       }); break;
       case 'bi-dashboard': Object.assign(config, {
         metrics: biState.metrics.map(m => ({ title: m.title, value: m.value, change: m.change }))
@@ -1437,6 +1415,13 @@ export async function render(container) {
   async function loadWidgets() {
     const widgets = await API('/widgets');
     loadedWidgets = Array.isArray(widgets) ? widgets : [];
+    
+    try {
+      const { api } = await import('../api.js');
+      const counters = await api.getTickets();
+      loadedTicketCounters = Array.isArray(counters) ? counters : [];
+    } catch (e) { console.warn('Failed to load tickets', e); }
+
     const grid = document.getElementById('widgetGrid');
     if (!widgets.length) {
       grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><h3>${t('widget.empty_title')}</h3><p>${t('widget.empty_desc')}</p></div>`;

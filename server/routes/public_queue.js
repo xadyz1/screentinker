@@ -12,9 +12,14 @@ router.get('/:id', (req, res) => {
   let config = {};
   try { config = JSON.parse(widget.config || '{}'); } catch (e) {}
 
-  const establishmentName = config.establishment_name || 'Bem-vindo';
-  const counters = Array.isArray(config.counters) ? config.counters : [];
-  const color = config.color || '#e53935';
+  let counter = null;
+  if (config.counter_id) {
+    counter = db.prepare('SELECT * FROM ticket_counters WHERE id = ?').get(config.counter_id);
+  }
+
+  const establishmentName = config.establishment_name || (counter ? counter.name : 'Bem-vindo');
+  const color = (counter && counter.color) ? counter.color : (config.color || '#e53935');
+  const logoUrl = counter && counter.logo_url ? counter.logo_url : '';
 
   const html = `<!doctype html>
 <html lang="pt">
@@ -26,6 +31,7 @@ router.get('/:id', (req, res) => {
     :root { --accent: ${color}; }
     body { font-family: system-ui, sans-serif; background: #f4f6f8; margin: 0; padding: 20px; color: #333; text-align: center; }
     h1 { margin-top: 10px; font-size: 24px; color: var(--accent); }
+    .logo { max-width: 150px; max-height: 80px; margin-bottom: 10px; }
     .card { background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); margin-bottom: 20px; }
     .counter-btn { display: block; width: 100%; padding: 15px; margin: 10px 0; background: var(--accent); color: #fff; font-size: 18px; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; }
     .counter-btn:active { opacity: 0.8; transform: scale(0.98); }
@@ -35,14 +41,14 @@ router.get('/:id', (req, res) => {
   </style>
 </head>
 <body>
+  ${logoUrl ? `<img src="${logoUrl}" alt="Logo" class="logo">` : ''}
   <h1>${establishmentName}</h1>
   
   <div id="selectionView" class="card">
-    <p>Selecione um balcão para tirar a sua senha:</p>
-    ${counters.map(c => `
-      <button class="counter-btn" onclick="takeTicket('${c.label}')">${c.label}</button>
-    `).join('')}
-    ${counters.length === 0 ? '<p>Não há balcões configurados.</p>' : ''}
+    <p>Selecione para tirar a sua senha:</p>
+    ${counter 
+      ? `<button class="counter-btn" onclick="takeTicket('${counter.id}')">Tirar Senha para ${counter.name}</button>`
+      : '<p>Este ecrã não tem balcão associado.</p>'}
   </div>
 
   <div id="ticketView" class="card">
@@ -56,12 +62,12 @@ router.get('/:id', (req, res) => {
     let myTicket = null;
     let myCounter = null;
     
-    async function takeTicket(counterName) {
+    async function takeTicket(counterId) {
       try {
         const res = await fetch('/public/q/' + widgetId + '/issue', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ counter: counterName })
+          body: JSON.stringify({ counter_id: counterId })
         });
         const data = await res.json();
         if (data.ticket) {
@@ -120,17 +126,20 @@ router.post('/:id/issue', express.json(), (req, res) => {
   let config = {};
   try { config = JSON.parse(widget.config || '{}'); } catch (e) {}
 
-  const counterName = req.body.counter || 'Geral';
-  let issueTicket = parseInt(config.issueTicket) || parseInt(config.currentTicket) || 0;
-  
+  if (!config.counter_id) {
+    return res.status(400).json({ error: 'No counter associated' });
+  }
+
+  const counter = db.prepare('SELECT * FROM ticket_counters WHERE id = ?').get(config.counter_id);
+  if (!counter) return res.status(404).json({ error: 'Counter not found' });
+
+  let issueTicket = parseInt(counter.issue_ticket) || parseInt(counter.current_ticket) || 0;
   issueTicket++;
   const formatted = issueTicket.toString().padStart(3, '0');
   
-  config.issueTicket = formatted;
+  db.prepare("UPDATE ticket_counters SET issue_ticket = ? WHERE id = ?").run(issueTicket, counter.id);
   
-  db.prepare("UPDATE widgets SET config = ?, updated_at = strftime('%s','now') WHERE id = ?").run(JSON.stringify(config), req.params.id);
-  
-  res.json({ ticket: formatted, counter: counterName });
+  res.json({ ticket: formatted, counter: counter.name });
 });
 
 // GET /public/q/:id/state - Returns current queue state
@@ -141,10 +150,21 @@ router.get('/:id/state', (req, res) => {
   let config = {};
   try { config = JSON.parse(widget.config || '{}'); } catch (e) {}
   
+  let counterName = 'Balcão 1';
+  let ticket = '000';
+  
+  if (config.counter_id) {
+    const counter = db.prepare('SELECT * FROM ticket_counters WHERE id = ?').get(config.counter_id);
+    if (counter) {
+      counterName = counter.name;
+      ticket = counter.current_ticket;
+    }
+  }
+  
   res.json({
     current: {
-      ticket: config.currentTicket || '000',
-      counter: config.counterName || 'Balcão 1'
+      ticket: ticket,
+      counter: counterName
     }
   });
 });

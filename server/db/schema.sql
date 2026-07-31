@@ -642,6 +642,21 @@ VALUES
   ('tpl-k-4', 'Directory', 'corporate', 'Diretório e navegação de edifício', '{"style":{"theme":"light","color":"#3b82f6"},"buttons":[{"id":"b1","label":"Piso 1","action":"page","page":"p1"},{"id":"b2","label":"Piso 2","action":"page","page":"p2"}]}', 4),
   ('tpl-k-5', 'Promo Page', 'retail', 'Página promocional simples', '{"style":{"theme":"dark","color":"#10b981"},"buttons":[{"id":"b1","label":"Ver Promoções","action":"page","page":"promos"}]}', 5);
 
+-- ===================== TICKET COUNTERS =====================
+CREATE TABLE IF NOT EXISTS ticket_counters (
+    id              TEXT PRIMARY KEY,
+    workspace_id    TEXT,
+    name            TEXT NOT NULL,
+    description     TEXT,
+    color           TEXT,
+    logo_url        TEXT,
+    is_active       INTEGER NOT NULL DEFAULT 1,
+    current_ticket  TEXT DEFAULT '000',
+    issue_ticket    INTEGER DEFAULT 0,
+    last_called_json TEXT,
+    created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+
 -- ===================== SCHEMA MIGRATIONS =====================
 
 CREATE TABLE IF NOT EXISTS schema_migrations (

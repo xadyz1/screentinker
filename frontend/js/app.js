@@ -18,6 +18,7 @@ import * as teams from './views/teams.js';
 import * as admin from './views/admin.js';
 import * as adminPlayerDebug from './views/admin-player-debug.js';
 import * as designer from './views/designer.js';
+import * as tickets from './views/tickets.js';
 import * as playlists from './views/playlists.js';
 import * as workspaceMembers from './views/workspace-members.js';
 import * as forcePasswordChange from './views/force-password-change.js';
@@ -396,6 +397,7 @@ function route() {
     else if ((hash === '#/designer' || hash.startsWith('#/designer/')) && link.dataset.view === 'designer') link.classList.add('active');
     else if ((hash === '#/kiosk' || hash.startsWith('#/kiosk/')) && link.dataset.view === 'kiosk') link.classList.add('active');
     else if (hash === '#/help' && link.dataset.view === 'help') link.classList.add('active');
+    else if (hash === '#/tickets' && link.dataset.view === 'tickets') link.classList.add('active');
     else if (hash.startsWith('#/device/') && link.dataset.view === 'dashboard') link.classList.add('active');
   });
 
@@ -431,6 +433,9 @@ function route() {
   } else if (hash === '#/kiosk' || hash.startsWith('#/kiosk/')) {
     currentView = kiosk;
     kiosk.render(app);
+  } else if (hash === '#/tickets') {
+    currentView = tickets;
+    tickets.renderTickets();
   } else if (hash === '#/designer' || hash.startsWith('#/designer/')) {
     currentView = designer;
     // #/designer/<widgetId> reopens a designer-made widget for editing; #/designer starts fresh.
