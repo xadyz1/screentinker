@@ -47,24 +47,24 @@ async function renderList(container) {
     try {
       const templates = await API('/kiosk/kiosk-templates');
       
-      let html = \`
+      let html = `
         <div class="content-item" style="cursor:pointer;border:2px dashed var(--border);background:var(--bg-panel);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:30px 20px;text-align:center" id="btnBlankKiosk">
           <div style="font-size:24px;margin-bottom:8px;color:var(--text-muted)">+</div>
-          <div style="font-weight:600;font-size:14px">\${t('widget.template.blank', 'Começar em branco')}</div>
+          <div style="font-weight:600;font-size:14px">${t('widget.template.blank', 'Começar em branco')}</div>
         </div>
-      \`;
+      `;
       
       templates.forEach(tpl => {
-        html += \`
-          <div class="content-item template-card" style="cursor:pointer;position:relative" data-template-id="\${esc(tpl.id)}">
+        html += `
+          <div class="content-item template-card" style="cursor:pointer;position:relative" data-template-id="${esc(tpl.id)}">
             <div style="padding:16px;display:flex;flex-direction:column;height:100%">
-              <div style="font-weight:600;font-size:15px;margin-bottom:6px">\${esc(tpl.name)}</div>
-              <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px">\${esc(tpl.category)}</div>
-              <div style="font-size:13px;color:var(--text);flex:1;line-height:1.4">\${esc(tpl.description || '')}</div>
+              <div style="font-weight:600;font-size:15px;margin-bottom:6px">${esc(tpl.name)}</div>
+              <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px">${esc(tpl.category)}</div>
+              <div style="font-size:13px;color:var(--text);flex:1;line-height:1.4">${esc(tpl.description || '')}</div>
               <div style="margin-top:16px;color:var(--accent);font-size:13px;font-weight:500">Usar Template &rarr;</div>
             </div>
           </div>
-        \`;
+        `;
       });
       
       listEl.innerHTML = html;
@@ -74,7 +74,7 @@ async function renderList(container) {
         if (!name) return;
         const page = await API('/kiosk', { method: 'POST', body: JSON.stringify({ name }) });
         document.getElementById('kioskModal').style.display = 'none';
-        window.location.hash = \`#/kiosk/\${page.id}\`;
+        window.location.hash = `#/kiosk/${page.id}`;
       };
       
       listEl.querySelectorAll('.template-card').forEach(card => {
@@ -85,11 +85,11 @@ async function renderList(container) {
           if (!name) return;
           const page = await API('/kiosk', { method: 'POST', body: JSON.stringify({ name, config: tpl.config_json }) });
           document.getElementById('kioskModal').style.display = 'none';
-          window.location.hash = \`#/kiosk/\${page.id}\`;
+          window.location.hash = `#/kiosk/${page.id}`;
         };
       });
     } catch (err) {
-      listEl.innerHTML = \`<div style="color:var(--danger)">Failed to load templates: \${esc(err.message)}</div>\`;
+      listEl.innerHTML = `<div style="color:var(--danger)">Failed to load templates: ${esc(err.message)}</div>`;
     }
   };
 
