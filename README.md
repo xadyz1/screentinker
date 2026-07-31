@@ -277,6 +277,10 @@ Use this in local dev when running against a fresh production database clone to 
 
 ### Production Deployment
 
+> [!WARNING]
+> **Native Compilation Restriction**
+> ScreenTinker intentionally avoids using `better-sqlite3` and relies exclusively on `libsql` for SQLite connections. `better-sqlite3` requires compiling from source via `node-gyp` if a matching prebuilt binary is not found, which fails on many shared hosting environments (like cPanel/CloudLinux) that lack a C/C++ compiler (`make`). `libsql` uses cross-platform Rust binaries via optional dependencies, guaranteeing installation success without needing root access to install build tools. **Do not introduce native C/C++ dependencies unless they guarantee fallback-free prebuilds.**
+
 For production, put the app behind a reverse proxy (nginx, Caddy, etc.) with SSL:
 
 ```bash

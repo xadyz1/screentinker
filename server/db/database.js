@@ -6,26 +6,23 @@ const { chunkedDelete, yieldTick, currentBand } = require('../lib/chunked-prune'
 const dbDir = path.dirname(config.dbPath);
 if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
 
+// RESTRICTION: This project uses `libsql` exclusively because the production
+// hosting environment (cPanel/CloudLinux) lacks root access and a C/C++ toolchain (`make`).
+// `better-sqlite3` relies on `node-gyp` fallback when prebuilt binaries mismatch the
+// host's glibc version, which breaks the production build. `libsql` uses pre-built Rust 
+// binaries via optionalDependencies which install reliably without compilation.
+const Database = require('libsql');
+const isLibsql = true; // Kept to safely disable the wal-checkpointer worker
+
 const dbOptions = {};
-let Database;
-let isLibsql = false;
 
 if (config.bunnyDbUrl && config.bunnyDbAuthToken) {
-  try {
-    Database = require('libsql');
-    isLibsql = true;
-    dbOptions.syncUrl = config.bunnyDbUrl;
-    dbOptions.authToken = config.bunnyDbAuthToken;
-    // syncInterval is in SECONDS (not ms) per the libsql embedded-replica API.
-    // A 60-second background sync is generous: writes are cheap locally and the
-    // replica eventually converges. Set BUNNY_SYNC_INTERVAL_SECS in env to tune.
-    dbOptions.syncInterval = parseInt(process.env.BUNNY_SYNC_INTERVAL_SECS) || 60;
-  } catch (err) {
-    fs.writeFileSync('libsql-crash.txt', err.toString() + '\n' + err.stack);
-    throw err;
-  }
-} else {
-  Database = require('better-sqlite3');
+  dbOptions.syncUrl = config.bunnyDbUrl;
+  dbOptions.authToken = config.bunnyDbAuthToken;
+  // syncInterval is in SECONDS (not ms) per the libsql embedded-replica API.
+  // A 60-second background sync is generous: writes are cheap locally and the
+  // replica eventually converges. Set BUNNY_SYNC_INTERVAL_SECS in env to tune.
+  dbOptions.syncInterval = parseInt(process.env.BUNNY_SYNC_INTERVAL_SECS) || 60;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
