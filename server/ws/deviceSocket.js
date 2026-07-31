@@ -185,16 +185,19 @@ function buildPlaylistPayload(deviceId) {
   const device = db.prepare('SELECT playlist_id, layout_id, orientation, wall_id, timezone, reported_timezone FROM devices WHERE id = ?').get(deviceId);
 
   let assignments = [];
+  let playlistLayoutId = null;
   if (device?.playlist_id) {
-    const playlist = db.prepare('SELECT published_snapshot FROM playlists WHERE id = ?').get(device.playlist_id);
+    const playlist = db.prepare('SELECT published_snapshot, layout_id FROM playlists WHERE id = ?').get(device.playlist_id);
+    playlistLayoutId = playlist?.layout_id;
     if (playlist?.published_snapshot) {
       try { assignments = JSON.parse(playlist.published_snapshot); } catch (e) { assignments = []; }
     }
   }
 
   let layout = null;
-  if (device?.layout_id) {
-    layout = db.prepare('SELECT * FROM layouts WHERE id = ?').get(device.layout_id);
+  const activeLayoutId = playlistLayoutId || device?.layout_id;
+  if (activeLayoutId) {
+    layout = db.prepare('SELECT * FROM layouts WHERE id = ?').get(activeLayoutId);
     if (layout) {
       layout.zones = db.prepare('SELECT * FROM layout_zones WHERE layout_id = ? ORDER BY sort_order').all(layout.id);
     }
