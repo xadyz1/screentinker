@@ -629,7 +629,31 @@ if (isAuthenticated()) {
     } catch {}
   }, 60000);
 }
-window.addEventListener('hashchange', route);
+window.appHasUnsavedChanges = false;
+let currentHash = window.location.hash || '#/';
+let isRevertingHash = false;
+
+window.addEventListener('hashchange', (e) => {
+  if (window.appHasUnsavedChanges && !isRevertingHash) {
+    if (!confirm(t('common.unsaved_changes_warning') || 'Tem alterações não publicadas. Tem a certeza que quer sair desta página?')) {
+      isRevertingHash = true;
+      window.location.hash = currentHash;
+      return;
+    }
+  }
+  window.appHasUnsavedChanges = false;
+  isRevertingHash = false;
+  currentHash = window.location.hash || '#/';
+  route();
+});
+
+window.addEventListener('beforeunload', (e) => {
+  if (window.appHasUnsavedChanges) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
 route();
 
 // Close-modal buttons (replaces inline onclick handlers — required for CSP).

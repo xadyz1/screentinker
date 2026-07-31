@@ -156,7 +156,9 @@ function pushToDevices(playlistId, reqOrIo) {
     for (const d of devices) {
       commandQueue.queueOrEmitPlaylistUpdate(deviceNs, d.id, buildPlaylistPayload);
     }
-  } catch (e) { /* silent */ }
+  } catch (e) { 
+    console.error(`[playlists] pushToDevices failed for playlist ${playlistId}:`, e.message); 
+  }
 }
 
 // #73: the shared publish path - snapshot current items into published_snapshot (what
@@ -265,25 +267,30 @@ router.put('/:id', requirePlaylistWrite, (req, res) => {
 
 // Publish playlist — snapshot current items and push to devices
 router.post('/:id/publish', requirePlaylistWrite, (req, res) => {
-  // Snapshot shape (no pi.id) is intentional — published_snapshot is consumed
-  // by devices and stored as JSON; row IDs there would be misleading.
-  publishPlaylist(req.params.id, req);
-  // UI response shape must include pi.id so the post-publish render can wire
-  // per-row delete/duration listeners. TODO: refactor to share this SELECT
-  // with GET /:id (also duplicated in /discard and POST /:id/items/reorder).
-  const items = db.prepare(`
-    SELECT pi.*,
-           COALESCE(c.filename, w.name) as filename,
-           c.mime_type, c.filepath, c.thumbnail_path,
-           c.duration_sec as content_duration, c.file_size, c.remote_url,
-           w.name as widget_name, w.widget_type, w.config as widget_config
-    FROM playlist_items pi
-    LEFT JOIN content c ON pi.content_id = c.id
-    LEFT JOIN widgets w ON pi.widget_id = w.id
-    WHERE pi.playlist_id = ?
-    ORDER BY pi.sort_order ASC
-  `).all(req.params.id);
-  res.json({ ...db.prepare('SELECT * FROM playlists WHERE id = ?').get(req.params.id), items });
+  try {
+    // Snapshot shape (no pi.id) is intentional — published_snapshot is consumed
+    // by devices and stored as JSON; row IDs there would be misleading.
+    publishPlaylist(req.params.id, req);
+    // UI response shape must include pi.id so the post-publish render can wire
+    // per-row delete/duration listeners. TODO: refactor to share this SELECT
+    // with GET /:id (also duplicated in /discard and POST /:id/items/reorder).
+    const items = db.prepare(`
+      SELECT pi.*,
+             COALESCE(c.filename, w.name) as filename,
+             c.mime_type, c.filepath, c.thumbnail_path,
+             c.duration_sec as content_duration, c.file_size, c.remote_url,
+             w.name as widget_name, w.widget_type, w.config as widget_config
+      FROM playlist_items pi
+      LEFT JOIN content c ON pi.content_id = c.id
+      LEFT JOIN widgets w ON pi.widget_id = w.id
+      WHERE pi.playlist_id = ?
+      ORDER BY pi.sort_order ASC
+    `).all(req.params.id);
+    res.json({ ...db.prepare('SELECT * FROM playlists WHERE id = ?').get(req.params.id), items });
+  } catch (e) {
+    console.error(`[playlists] Error publishing playlist ${req.params.id}:`, e);
+    res.status(500).json({ error: 'Failed to publish playlist: ' + (e.message || 'Unknown error') });
+  }
 });
 
 // Discard draft — revert playlist_items to match published_snapshot

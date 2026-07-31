@@ -172,6 +172,7 @@ async function loadDevice(deviceId, activeTab = null) {
   try {
     const device = await api.getDevice(deviceId);
     currentDevice = device;
+    window.appHasUnsavedChanges = (device.playlist_status === 'draft');
     const latestTelemetry = device.telemetry?.[0] || {};
     const diagWidget = (device.assignments || []).find(a => a && a.widget_type === 'diag-smoothness');
 
@@ -248,6 +249,7 @@ async function loadDevice(deviceId, activeTab = null) {
               <div style="font-size:12px;color:#fecaca;opacity:0.85">${t('device.pl_item.orphan_banner_desc')}</div>
             </div>
           </div>
+          <button class="btn btn-sm" id="btnReassignOrphans" style="background:#ef4444;color:#fff;border:none;flex-shrink:0">${t('device.pl_item.reassign_orphans') || 'Reatribuir'}</button>
         </div>` : ''}
         ${device.playlist_status === 'draft' ? `
         <div id="deviceDraftBanner" style="background:#78350f;border:1px solid #92400e;border-radius:var(--radius);padding:14px 20px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:16px">
@@ -1554,6 +1556,21 @@ function attachRemoveHandlers(device) {
         if (sel) { sel.scrollIntoView({ block: 'center', behavior: 'smooth' }); sel.focus(); }
       });
     });
+
+    const reassignBtn = document.getElementById('btnReassignOrphans');
+    if (reassignBtn) {
+      reassignBtn.addEventListener('click', () => {
+        const firstOrphan = document.querySelector('.pl-orphan-warning');
+        if (firstOrphan) {
+          firstOrphan.click();
+          const sel = document.querySelector('.zone-select[data-assignment-id="' + firstOrphan.dataset.orphanAssignment + '"]');
+          if (sel) {
+            sel.style.boxShadow = '0 0 0 4px rgba(239, 68, 68, 0.4)';
+            setTimeout(() => sel.style.boxShadow = '', 2000);
+          }
+        }
+      });
+    }
 
     const populateZoneSelects = (zones) => {
       const activeIds = new Set((zones || []).map(z => z.id));

@@ -254,6 +254,7 @@ function showPlaylistPreview(playlist) {
 function renderDetailContent(container, playlist) {
   const isDraft = playlist.status === 'draft';
   const hasPublished = !!playlist.published_snapshot;
+  window.appHasUnsavedChanges = isDraft;
 
   container.innerHTML = `
     ${isDraft ? `

@@ -168,7 +168,42 @@ router.put('/:id', (req, res) => {
 
   const updated = db.prepare('SELECT * FROM layouts WHERE id = ?').get(req.params.id);
   updated.zones = db.prepare('SELECT * FROM layout_zones WHERE layout_id = ? ORDER BY sort_order').all(req.params.id);
+
+  // Count published playlists using this layout
+  const affected = db.prepare(`
+    SELECT COUNT(DISTINCT d.playlist_id) as count
+    FROM devices d
+    JOIN playlists p ON p.id = d.playlist_id
+    WHERE d.layout_id = ? AND p.published_snapshot IS NOT NULL
+  `).get(req.params.id);
+  updated.affected_playlists = affected ? affected.count : 0;
+
   res.json(updated);
+});
+
+// Republish all published playlists that use this layout
+router.post('/:id/republish-affected', (req, res) => {
+  const layout = checkLayoutWrite(req, res);
+  if (!layout) return;
+
+  const playlists = db.prepare(`
+    SELECT DISTINCT d.playlist_id
+    FROM devices d
+    JOIN playlists p ON p.id = d.playlist_id
+    WHERE d.layout_id = ? AND p.published_snapshot IS NOT NULL
+  `).all(req.params.id);
+
+  if (playlists.length > 0) {
+    const { publishPlaylist } = require('./playlists');
+    for (const p of playlists) {
+      try {
+        publishPlaylist(p.playlist_id, req);
+      } catch (e) {
+        console.error(`[layouts] Failed to republish playlist ${p.playlist_id} affected by layout ${req.params.id}:`, e.message);
+      }
+    }
+  }
+  res.json({ republished: playlists.length });
 });
 
 // Delete layout
