@@ -772,7 +772,6 @@
         <a href="#features">Features</a>
         <a href="#platforms">Platforms</a>
         <a href="#pricing">Pricing</a>
-        <a href="#compare">Compare</a>
         <a href="/integrations/">Integrations</a>
 
         <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
@@ -791,8 +790,6 @@
         analytics — <strong>self-host it</strong> on your own server or use our managed cloud.</p>
       <div class="hero-btns">
         <a href="mailto:sales@swiftdisplay.pt" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Contact Sales for Demo</a>
-
-        <a href="#compare" class="btn btn-outline" style="padding:14px 28px;font-size:16px">See How We Compare</a>
       </div>
     </section>
 
@@ -1018,33 +1015,64 @@
     </section>
 
     <!-- Pricing -->
-    <section class="pricing" id="pricing">
+    <section class="pricing-section" id="pricing">
       <h2>Simple, Honest Pricing</h2>
       <p class="subtitle">All plans include remote control, monitoring, and unlimited content</p>
-      <div class="pricing-grid" id="pricingGrid"></div>
+      
+      <div class="pricing-cards">
+        
+        <!-- Start Card -->
+        <div class="modern-price-card">
+          <h3>Start</h3>
+          <div class="price">&euro;15.99<span>/mo</span></div>
+          <div class="billing-cycle">Billed monthly</div>
+          <ul>
+            <li>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              8 devices
+            </li>
+            <li>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              2 GB storage
+            </li>
+            <li>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              Remote control & live view
+            </li>
+          </ul>
+          <a href="/app#/login" class="btn btn-outline" style="width:100%;justify-content:center">Start Free Trial</a>
+        </div>
+
+        <!-- Pro Card -->
+        <div class="modern-price-card featured">
+          <h3>Pro</h3>
+          <div class="price">&euro;25.99<span>/mo</span></div>
+          <div class="billing-cycle">Billed monthly</div>
+          <ul>
+            <li>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              25 devices
+            </li>
+            <li>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              10 GB storage
+            </li>
+            <li>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              Remote control & live view
+            </li>
+            <li>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              Remote URL streaming
+            </li>
+          </ul>
+          <a href="/app#/login" class="btn btn-primary" style="width:100%;justify-content:center">Start Free Trial</a>
+        </div>
+
+      </div>
+      <div class="vat-note">* Prices exclude VAT</div>
     </section>
 
-    <!-- Compare -->
-    <section class="compare" id="compare">
-      <h2>How We Compare</h2>
-      <div class="table-scroll">
-        <table class="compare-table">
-          <thead>
-            <tr>
-              <th></th>
-              <th style="color:var(--accent);font-weight:700">SwiftDisplay</th>
-              <th>Yodeck</th>
-              <th>ScreenCloud</th>
-              <th>OptiSigns</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Price (15 devices/yr)</td>
-              <td style="color:var(--accent);font-weight:600">&euro;1,188</td>
-              <td>&euro;1,440+</td>
-              <td>&euro;3,600+</td>
-              <td>&euro;1,800+</td>
             </tr>
             <tr>
               <td>Free tier</td>
@@ -1144,30 +1172,6 @@
           <div style="font-weight:600;margin-bottom:4px">Self-hosted digital signage guide</div>
           <div style="font-size:13px;color:var(--muted)">Sizing, deploy, TLS, backups.</div>
         </a>
-        <a href="/compare/yodeck-alternative.html"
-          style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
-          <div
-            style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">
-            Compare</div>
-          <div style="font-weight:600;margin-bottom:4px">SwiftDisplay vs Yodeck</div>
-          <div style="font-size:13px;color:var(--muted)">Features, pricing, platform support.</div>
-        </a>
-        <a href="/compare/screencloud-alternative.html"
-          style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
-          <div
-            style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">
-            Compare</div>
-          <div style="font-weight:600;margin-bottom:4px">SwiftDisplay vs ScreenCloud</div>
-          <div style="font-size:13px;color:var(--muted)">Pricing breakdown at scale.</div>
-        </a>
-        <a href="/compare/optisigns-alternative.html"
-          style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
-          <div
-            style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">
-            Compare</div>
-          <div style="font-weight:600;margin-bottom:4px">SwiftDisplay vs OptiSigns</div>
-          <div style="font-size:13px;color:var(--muted)">Side by side feature and price comparison.</div>
-        </a>
         <a href="/guides/open-source-digital-signage.html"
           style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
           <div
@@ -1184,22 +1188,6 @@
           <div style="font-weight:600;margin-bottom:4px">What is digital signage?</div>
           <div style="font-size:13px;color:var(--muted)">Beginner's guide: how it works and what it costs.</div>
         </a>
-        <a href="/compare/xibo-alternative.html"
-          style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
-          <div
-            style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">
-            Compare</div>
-          <div style="font-weight:600;margin-bottom:4px">SwiftDisplay vs Xibo</div>
-          <div style="font-size:13px;color:var(--muted)">Open source vs open source — and the paid players.</div>
-        </a>
-        <a href="/compare/anthias-alternative.html"
-          style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
-          <div
-            style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">
-            Compare</div>
-          <div style="font-weight:600;margin-bottom:4px">SwiftDisplay vs Anthias</div>
-          <div style="font-size:13px;color:var(--muted)">Beyond one Pi, one screen.</div>
-        </a>
         <a href="/integrations/"
           style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
           <div
@@ -1215,73 +1203,90 @@
     <section class="features" id="faq" style="max-width:820px">
       <h2>Frequently Asked Questions</h2>
       <p class="subtitle">Everything you need to know about running open-source digital signage.</p>
-      <div style="display:flex;flex-direction:column;gap:20px">
-        <div>
-          <h3 style="font-size:18px;margin-bottom:6px">Is there free digital signage software?</h3>
-          <p style="color:var(--muted);font-size:15px">Yes. SwiftDisplay is free and open source (MIT licensed). The
+      <div class="faq-accordion">
+        <details class="faq-item">
+          <summary>Is there free digital signage software?</summary>
+          <div class="faq-content">
+            <p style="color:var(--muted);font-size:15px;margin:0">Yes. SwiftDisplay is free and open source (MIT licensed). The
             free cloud plan runs 1 display with 500 MB of storage, and if you self-host there's no per-screen fee at all
             — run as many displays as your own server can handle. New accounts also get a 14-day Pro trial (15 displays)
             with no credit card required.</p>
-        </div>
-        <div>
-          <h3 style="font-size:18px;margin-bottom:6px">Can I run digital signage on a Raspberry Pi?</h3>
-          <p style="color:var(--muted);font-size:15px">Yes. A Raspberry Pi 4 or newer makes an excellent low-cost
+          </div>
+        </details>
+        <details class="faq-item">
+          <summary>Can I run digital signage on a Raspberry Pi?</summary>
+          <div class="faq-content">
+            <p style="color:var(--muted);font-size:15px;margin:0">Yes. A Raspberry Pi 4 or newer makes an excellent low-cost
             signage player. Our one-line installer sets up kiosk mode, auto-start, and pairing for you. See the full
             walkthrough in our <a href="/guides/raspberry-pi-digital-signage.html">Raspberry Pi digital signage
               guide</a>.</p>
-        </div>
-        <div>
-          <h3 style="font-size:18px;margin-bottom:6px">Does SwiftDisplay work on Android TV and Fire TV?</h3>
-          <p style="color:var(--muted);font-size:15px">Yes. Install the free APK on any Android TV box or Amazon Fire TV
+          </div>
+        </details>
+        <details class="faq-item">
+          <summary>Does SwiftDisplay work on Android TV and Fire TV?</summary>
+          <div class="faq-content">
+            <p style="color:var(--muted);font-size:15px;margin:0">Yes. Install the free APK on any Android TV box or Amazon Fire TV
             Stick to turn it into a managed signage display, complete with kiosk mode and live remote control.
             Step-by-step instructions are in our <a href="/guides/digital-signage-android-tv.html">Android TV &amp; Fire
               TV guide</a>. SwiftDisplay also runs on Windows, ChromeOS, LG webOS, Samsung Tizen, and any web browser.
-          </p>
-        </div>
-        <div>
-          <h3 style="font-size:18px;margin-bottom:6px">What's the difference between self-hosted and cloud digital
-            signage?</h3>
-          <p style="color:var(--muted);font-size:15px">With cloud, we host everything and you just sign in — the fastest
+            </p>
+          </div>
+        </details>
+        <details class="faq-item">
+          <summary>What's the difference between self-hosted and cloud digital signage?</summary>
+          <div class="faq-content">
+            <p style="color:var(--muted);font-size:15px;margin:0">With cloud, we host everything and you just sign in — the fastest
             way to start. With self-hosting, you deploy SwiftDisplay on your own server or VPS so your content and
             device data never leave your network, with no recurring SaaS fees. You can switch later. Our <a
               href="/guides/self-hosted-digital-signage.html">self-hosted digital signage guide</a> covers sizing,
             deployment, TLS, and backups.</p>
-        </div>
-        <div>
-          <h3 style="font-size:18px;margin-bottom:6px">Is SwiftDisplay really open source?</h3>
-          <p style="color:var(--muted);font-size:15px">Yes. The full platform is released under the permissive MIT
+          </div>
+        </details>
+        <details class="faq-item">
+          <summary>Is SwiftDisplay really open source?</summary>
+          <div class="faq-content">
+            <p style="color:var(--muted);font-size:15px;margin:0">Yes. The full platform is released under the permissive MIT
             license on <a href="https://github.com/swiftdisplay/swiftdisplay" target="_blank" rel="noopener">GitHub</a>.
             You can read the code, self-host it, modify it, and even white-label it — no vendor lock-in and no
             proprietary black box.</p>
-        </div>
-        <div>
-          <h3 style="font-size:18px;margin-bottom:6px">What can I put on my screens?</h3>
-          <p style="color:var(--muted);font-size:15px">Images, video, playlists, multi-zone layouts, and live widgets —
+          </div>
+        </details>
+        <details class="faq-item">
+          <summary>What can I put on my screens?</summary>
+          <div class="faq-content">
+            <p style="color:var(--muted);font-size:15px;margin:0">Images, video, playlists, multi-zone layouts, and live widgets —
             clocks, weather, RSS tickers, countdowns, QR codes, web pages, and scrolling lobby/staff directories. You
             can schedule different content by day and time, per display or per group.</p>
-        </div>
-        <div>
-          <h3 style="font-size:18px;margin-bottom:6px">Do my displays keep playing if the internet goes down?</h3>
-          <p style="color:var(--muted);font-size:15px">Yes. SwiftDisplay players cache their content locally and keep
+          </div>
+        </details>
+        <details class="faq-item">
+          <summary>Do my displays keep playing if the internet goes down?</summary>
+          <div class="faq-content">
+            <p style="color:var(--muted);font-size:15px;margin:0">Yes. SwiftDisplay players cache their content locally and keep
             playing during an internet or server outage, then sync automatically once the connection returns. No blank
             screens.</p>
-        </div>
-        <div>
-          <h3 style="font-size:18px;margin-bottom:6px">Can I control my screens remotely?</h3>
-          <p style="color:var(--muted);font-size:15px">Yes, on every plan. See a live view of what's on each screen,
+          </div>
+        </details>
+        <details class="faq-item">
+          <summary>Can I control my screens remotely?</summary>
+          <div class="faq-content">
+            <p style="color:var(--muted);font-size:15px;margin:0">Yes, on every plan. See a live view of what's on each screen,
             push content instantly, and send remote key presses or power commands. (Live view and key presses on Android
             require the on-device accessibility permission.)</p>
-        </div>
-        <div>
-          <h3 style="font-size:18px;margin-bottom:6px">Is there a limit on how many screens I can manage?</h3>
-          <p style="color:var(--muted);font-size:15px">On cloud plans, your display count is set by your tier (1 free,
+          </div>
+        </details>
+        <details class="faq-item">
+          <summary>Is there a limit on how many screens I can manage?</summary>
+          <div class="faq-content">
+            <p style="color:var(--muted);font-size:15px;margin:0">On cloud plans, your display count is set by your tier (1 free,
             up to 15 on Pro, more on Enterprise). If you self-host, there is no built-in device cap — you're limited
             only by your own hardware.</p>
-        </div>
-        <div>
-          <h3 style="font-size:18px;margin-bottom:6px">How does SwiftDisplay compare to Yodeck, ScreenCloud, and
-            OptiSigns?</h3>
-          <p style="color:var(--muted);font-size:15px">SwiftDisplay is typically a fraction of the price at scale and is
+          </div>
+        </details>
+        <details class="faq-item">
+          <summary>How does SwiftDisplay compare to Yodeck, ScreenCloud, and OptiSigns?</summary>
+          <div class="faq-content">
+            <p style="color:var(--muted);font-size:15px;margin:0">SwiftDisplay is typically a fraction of the price at scale and is
             the only one of the four you can self-host. See the detailed breakdowns: <a
               href="/compare/yodeck-alternative.html">vs Yodeck</a>, <a href="/compare/screencloud-alternative.html">vs
               ScreenCloud</a>, and <a href="/compare/optisigns-alternative.html">vs OptiSigns</a>.</p>
@@ -1316,16 +1321,7 @@
           <a href="/guides/self-hosted-digital-signage.html" style="color:var(--muted)">Self-hosting guide</a>
         </div>
       </div>
-      <div>
-        <div
-          style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px">
-          Compare</div>
-        <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
-          <a href="/compare/yodeck-alternative.html" style="color:var(--muted)">vs Yodeck</a>
-          <a href="/compare/screencloud-alternative.html" style="color:var(--muted)">vs ScreenCloud</a>
-          <a href="/compare/optisigns-alternative.html" style="color:var(--muted)">vs OptiSigns</a>
-        </div>
-      </div>
+
       <div>
         <div
           style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px">
@@ -1511,53 +1507,6 @@
   </script>
 
   <script>
-    // Load pricing from API. The 'enterprise' plan is filtered out of the
-    // public render because its DB row has price=0 / max=-1 (renders as
-    // "Free" + "Unlimited") which would undercut the actual Free tier and
-    // confuse visitors. The row itself stays in the DB - it's actively used
-    // for self-hosted first-user assignment and white-label gating - we just
-    // replace it on the public marketing page with a hardcoded Contact Us
-    // card. Other consumers of /api/subscription/plans (billing.js,
-    // settings.js, admin.js) get the full list as before.
-    fetch('/api/subscription/plans').then(r => r.json()).then(plans => {
-      const grid = document.getElementById('pricingGrid');
-      const publicPlans = plans.filter(p => p.active && p.name !== "enterprise" && p.name !== "free");
-      const planCardsHtml = publicPlans.map((p, i) => `
-        <div class="price-card ${i === 2 ? 'featured' : ''}">
-          <h3>${p.display_name}</h3>
-          <div class="price">${p.price_monthly > 0 ? "&euro;" + p.price_monthly : 'Free'}<span>${p.price_monthly > 0 ? '/mo' : ''}</span></div>
-          ${p.price_yearly > 0 ? `<div class="yearly">or &euro;${p.price_yearly}/year (save ${Math.round((1 - p.price_yearly / (p.price_monthly * 12)) * 100)}%)</div>` : '<div class="yearly">&nbsp;</div>'}
-          <ul>
-            <li>${p.max_devices === -1 ? 'Unlimited' : p.max_devices} device${p.max_devices !== 1 ? 's' : ''}</li>
-            <li>${p.max_storage_mb === -1 ? 'Unlimited' : p.max_storage_mb >= 1024 ? (p.max_storage_mb / 1024) + ' GB' : p.max_storage_mb + ' MB'} storage</li>
-            <li>Remote control & live view</li>
-            ${p.remote_url ? '<li>Remote URL streaming</li>' : ''}
-            ${p.priority_support ? '<li>Priority support</li>' : ''}
-          </ul>
-          <a href="/app#/login" class="btn ${i === 0 ? 'btn-outline' : 'btn-primary'}" style="width:100%;justify-content:center">${p.price_monthly > 0 ? 'Start Trial' : 'Get Started'}</a>
-        </div>
-      `).join('');
-      // Hardcoded Enterprise / Custom card. Uses .price class for vertical
-      // alignment with the other cards (same baseline for the feature list);
-      // empty .yearly spacer matches the Free card's structure.
-      const enterpriseCardHtml = `
-        <div class="price-card">
-          <h3>Enterprise / Custom</h3>
-          <div class="price">Let's talk</div>
-          <div class="yearly">&nbsp;</div>
-          <ul>
-            <li>Everything in Business</li>
-            <li>Multi-tenant / multiple organizations</li>
-            <li>Volume device pricing</li>
-            <li>Custom hosting options</li>
-            <li>Priority support</li>
-          </ul>
-          <button type="button" class="btn btn-primary" style="width:100%;justify-content:center" onclick="openContactModal()">Contact Us</button>
-        </div>
-      `;
-      grid.innerHTML = planCardsHtml + enterpriseCardHtml;
-    });
-
     // Smooth scroll for anchor links
     document.querySelectorAll('a[href^="#"]').forEach(a => {
       if (a.getAttribute('href').startsWith('#/')) return; // Skip app routes

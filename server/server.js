@@ -357,20 +357,6 @@ function rateLimit(windowMs, maxRequests) {
     next();
   };
 }
-
-// Auto-sync after mutating API requests complete.
-// This replaces the unsafe database.js monkey-patch with a safe, debounced sync queue.
-const { requestDbSync } = require('./db/database');
-app.use((req, res, next) => {
-  res.on('finish', () => {
-    if (req.method !== 'GET' && req.method !== 'OPTIONS') {
-      if (res.statusCode >= 200 && res.statusCode < 400) {
-        requestDbSync();
-      }
-    }
-  });
-  next();
-});
 // Auth routes (public, rate limited)
 app.use('/api/auth/login', rateLimit(60000, 10)); // 10 attempts per minute
 app.use('/api/auth/register', rateLimit(60000, 5)); // 5 registrations per minute
