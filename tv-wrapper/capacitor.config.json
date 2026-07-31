@@ -1,0 +1,10 @@
+{
+  "appId": "com.swiftdisplay.tvplayer",
+  "appName": "SwiftDisplay Player",
+  "webDir": "www",
+  "bundledWebRuntime": false,
+  "server": {
+    "url": "https://swiftdisplay.pt/public/display/SEU_ID_DE_ECRA",
+    "cleartext": true
+  }
+}

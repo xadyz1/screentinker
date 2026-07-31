@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const db = require('../db/database');
+const { db } = require('../db/database');
 
 // GET /public/q/:id - Render mobile-first public queue page
 router.get('/:id', (req, res) => {

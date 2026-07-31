@@ -137,7 +137,13 @@ async function renderEditor(container, pageId) {
   let page;
   try { page = await API(`/kiosk/${pageId}`); } catch { container.innerHTML = `<div class="empty-state"><h3>${t('kiosk.not_found')}</h3></div>`; return; }
 
-  let config = JSON.parse(page.config || '{}');
+  let config = {};
+  try {
+    config = typeof page.config === 'string' ? JSON.parse(page.config) : page.config;
+    if (typeof config === 'string') config = JSON.parse(config);
+  } catch(e) {}
+  if (!config || typeof config !== 'object') config = {};
+  
   if (!config.buttons) config.buttons = [];
   if (!config.style) config.style = {};
 

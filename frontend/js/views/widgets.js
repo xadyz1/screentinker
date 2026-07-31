@@ -598,12 +598,18 @@ export async function render(container) {
         break;
       case 'ticket-queue': {
         const countersField = loadedTicketCounters.length
-          ? `<select id="wTqCounter" class="input" style="background:var(--bg-input)">
+          ? `<select id="wTqCounter" class="input" style="background:var(--bg-input); flex: 1;">
                ${loadedTicketCounters.map(c => `<option value="${escAttr(c.id)}" ${config.counter_id == c.id ? 'selected' : ''}>${escAttr(c.name)}</option>`).join('')}
              </select>`
-          : `<div style="font-size:13px;color:var(--text-muted);padding:10px;border:1px dashed var(--border);border-radius:6px">Não existem balcões configurados. Crie um no menu Senhas primeiro.</div>`;
+          : `<div style="font-size:13px;color:var(--text-muted);padding:10px;border:1px dashed var(--border);border-radius:6px; flex: 1;">Não existem balcões configurados. Crie um no menu Senhas primeiro.</div>`;
         html += `
-          <div class="form-group"><label>Balcão Associado</label>${countersField}</div>
+          <div class="form-group">
+            <label>Balcão Associado</label>
+            <div style="display: flex; gap: 12px; align-items: center;">
+              ${countersField}
+              <a href="#/tickets" class="btn btn-secondary btn-sm" onclick="document.getElementById('widgetModal').style.display='none'">Gerir Balcões</a>
+            </div>
+          </div>
           <div class="form-group" style="display:flex; gap:16px;">
             <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
               <input type="checkbox" id="wTicketSound" ${config.soundEnabled !== false ? 'checked' : ''}> Som (Display)
