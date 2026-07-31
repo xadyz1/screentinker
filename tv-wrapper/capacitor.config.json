@@ -4,7 +4,7 @@
   "webDir": "www",
   "bundledWebRuntime": false,
   "server": {
-    "url": "https://swiftdisplay.pt/public/display/SEU_ID_DE_ECRA",
+    "url": "https://swiftdisplay.pt/player",
     "cleartext": true
   }
 }
