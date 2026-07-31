@@ -657,8 +657,32 @@ CREATE TABLE IF NOT EXISTS ticket_counters (
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
 
--- ===================== SCHEMA MIGRATIONS =====================
+-- ===================== VISUAL TEMPLATES =====================
+CREATE TABLE IF NOT EXISTS templates (
+    id              TEXT PRIMARY KEY,
+    workspace_id    TEXT, -- null for global system templates
+    name            TEXT NOT NULL,
+    category        TEXT NOT NULL DEFAULT 'uncategorized',
+    tags            TEXT, -- JSON array of strings
+    description     TEXT,
+    thumbnail_url   TEXT,
+    orientation     TEXT NOT NULL DEFAULT 'landscape',
+    document        TEXT NOT NULL, -- JSON document model (elements, canvas settings)
+    is_public       INTEGER NOT NULL DEFAULT 0, -- 1 if shared globally
+    is_featured     INTEGER NOT NULL DEFAULT 0,
+    sort_order      INTEGER NOT NULL DEFAULT 0,
+    created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
 
+CREATE TABLE IF NOT EXISTS template_versions (
+    id              TEXT PRIMARY KEY,
+    template_id     TEXT NOT NULL REFERENCES templates(id) ON DELETE CASCADE,
+    document        TEXT NOT NULL,
+    created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+
+-- ===================== SCHEMA MIGRATIONS =====================
 CREATE TABLE IF NOT EXISTS schema_migrations (
     id              TEXT PRIMARY KEY,
     ran_at          INTEGER NOT NULL DEFAULT (strftime('%s','now'))

@@ -34,6 +34,7 @@ const PUBLIC_ROUTERS = [
   { path: '/api/reports',     mod: './routes/reports' },
   { path: '/api/groups',      mod: './routes/device-groups' },
   { path: '/api/playlists',   mod: './routes/playlists' },
+  { path: '/api/templates',   mod: './routes/templates' },
   { path: '/api/activity',    mod: './routes/activity' },
   { path: '/api/kiosk',       mod: './routes/kiosk', renderBypass: true },
   { path: '/api/pip',         mod: './routes/pip' },
