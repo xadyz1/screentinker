@@ -1,11 +1,4 @@
 const fs = require('fs');
-let Database;
-try {
-  Database = require('libsql');
-} catch (err) {
-  fs.writeFileSync('libsql-crash.txt', err.toString() + '\\n' + err.stack);
-  throw err;
-}
 const path = require('path');
 const config = require('../config');
 const { chunkedDelete, yieldTick, currentBand } = require('../lib/chunked-prune'); // #146 non-blocking sweeps
@@ -14,13 +7,25 @@ const dbDir = path.dirname(config.dbPath);
 if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
 
 const dbOptions = {};
+let Database;
+let isLibsql = false;
+
 if (config.bunnyDbUrl && config.bunnyDbAuthToken) {
-  dbOptions.syncUrl = config.bunnyDbUrl;
-  dbOptions.authToken = config.bunnyDbAuthToken;
-  // syncInterval is in SECONDS (not ms) per the libsql embedded-replica API.
-  // A 60-second background sync is generous: writes are cheap locally and the
-  // replica eventually converges. Set BUNNY_SYNC_INTERVAL_SECS in env to tune.
-  dbOptions.syncInterval = parseInt(process.env.BUNNY_SYNC_INTERVAL_SECS) || 60;
+  try {
+    Database = require('libsql');
+    isLibsql = true;
+    dbOptions.syncUrl = config.bunnyDbUrl;
+    dbOptions.authToken = config.bunnyDbAuthToken;
+    // syncInterval is in SECONDS (not ms) per the libsql embedded-replica API.
+    // A 60-second background sync is generous: writes are cheap locally and the
+    // replica eventually converges. Set BUNNY_SYNC_INTERVAL_SECS in env to tune.
+    dbOptions.syncInterval = parseInt(process.env.BUNNY_SYNC_INTERVAL_SECS) || 60;
+  } catch (err) {
+    fs.writeFileSync('libsql-crash.txt', err.toString() + '\n' + err.stack);
+    throw err;
+  }
+} else {
+  Database = require('better-sqlite3');
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -1095,4 +1100,4 @@ try {
 const { verifyAndRepairSchema } = require('../lib/schema-check');
 verifyAndRepairSchema(db);
 
-module.exports = { db, pruneTelemetry, pruneScreenshots, pruneStatusLog, getMaintenanceStats };
+module.exports = { db, isLibsql, pruneTelemetry, pruneScreenshots, pruneStatusLog, getMaintenanceStats };

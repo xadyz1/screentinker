@@ -5,6 +5,8 @@ export default {
   // #zone-orphan dashboard warnings
   'device.pl_item.orphan_zone': 'Zona de outro layout — reatribuir',
   'device.pl_item.orphan_zone_tip': 'A zona deste item não faz parte do layout atual do dispositivo. Ele continua sendo reproduzido (recuperado na maior zona), mas reatribua-o a uma zona deste layout.',
+  'device.pl_item.orphan_count': '1 item desalinhado |||| %n itens desalinhados',
+  'device.pl_item.orphan_banner_desc': 'Alguns itens na playlist não pertencem a nenhuma zona deste layout. Eles continuam a ser reproduzidos na zona principal do dispositivo, mas devem ser reatribuídos para evitar comportamentos indesejados.',
   'dashboard.device_orphan_tip_one': '{n} item atribuído a uma zona que não está no layout deste dispositivo — abra o dispositivo para reatribuir',
   'dashboard.device_orphan_tip_other': '{n} itens atribuídos a uma zona que não está no layout deste dispositivo — abra o dispositivo para reatribuir',
   // Nav

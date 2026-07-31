@@ -239,6 +239,16 @@ async function loadDevice(deviceId, activeTab = null) {
 
       <!-- Playlist Tab -->
       <div class="tab-content" id="tab-playlist">
+        ${device.orphan_count > 0 ? `
+        <div id="deviceOrphanBanner" style="background:#7f1d1d;border:1px solid #991b1b;border-radius:var(--radius);padding:14px 20px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:16px">
+          <div style="display:flex;align-items:center;gap:10px;color:#fca5a5">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <div>
+              <div style="font-weight:600;font-size:14px">${tn('device.pl_item.orphan_count', device.orphan_count)}</div>
+              <div style="font-size:12px;color:#fecaca;opacity:0.85">${t('device.pl_item.orphan_banner_desc')}</div>
+            </div>
+          </div>
+        </div>` : ''}
         ${device.playlist_status === 'draft' ? `
         <div id="deviceDraftBanner" style="background:#78350f;border:1px solid #92400e;border-radius:var(--radius);padding:14px 20px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:16px">
           <div style="display:flex;align-items:center;gap:10px;color:#fbbf24">

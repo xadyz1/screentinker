@@ -798,7 +798,10 @@ startAgencyDigest();
 // (the ~60s p99 spike = a synchronous fsync-heavy checkpoint on the loop) and runs PASSIVE
 // (escalating to TRUNCATE if starved) from a worker thread. Started AFTER the DB is open+migrated.
 const { startWalCheckpointer, stopWalCheckpointer } = require('./db/wal-checkpointer');
-startWalCheckpointer(require('./db/database').db, config.dbPath);
+const dbModule = require('./db/database');
+if (!dbModule.isLibsql) {
+  startWalCheckpointer(dbModule.db, config.dbPath);
+}
 
 // Version update indicator: poll GHCR for latest image tag, cache in memory.
 // First poll fires after 30s to let the server stabilize.

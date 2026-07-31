@@ -127,16 +127,39 @@ router.put('/:id', (req, res) => {
     // delete/add loop. Reuse each zone's id when supplied so device->zone
     // assignments survive an edit (a fresh uuid per save would orphan them).
     if (Array.isArray(zones)) {
-      db.prepare('DELETE FROM layout_zones WHERE layout_id = ?').run(req.params.id);
-      const stmt = db.prepare(`
+      const existingZones = db.prepare('SELECT id FROM layout_zones WHERE layout_id = ?').all(req.params.id);
+      const incomingIds = new Set(zones.map(z => z.id).filter(Boolean));
+      
+      const toDelete = existingZones.filter(z => !incomingIds.has(z.id));
+      if (toDelete.length > 0) {
+        const placeholders = toDelete.map(() => '?').join(',');
+        db.prepare(`DELETE FROM layout_zones WHERE layout_id = ? AND id IN (${placeholders})`)
+          .run(req.params.id, ...toDelete.map(z => z.id));
+      }
+
+      const insertStmt = db.prepare(`
         INSERT INTO layout_zones (id, layout_id, name, x_percent, y_percent, width_percent, height_percent, z_index, zone_type, fit_mode, background_color, sort_order)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
+      const updateStmt = db.prepare(`
+        UPDATE layout_zones SET name = ?, x_percent = ?, y_percent = ?, width_percent = ?, height_percent = ?, z_index = ?, zone_type = ?, fit_mode = ?, background_color = ?, sort_order = ?
+        WHERE id = ? AND layout_id = ?
+      `);
+
       zones.forEach((z, i) => {
-        stmt.run(z.id || uuidv4(), req.params.id, z.name || `Zone ${i + 1}`,
-          z.x_percent || 0, z.y_percent || 0, z.width_percent || 100, z.height_percent || 100,
-          z.z_index || 0, z.zone_type || 'content', z.fit_mode || 'contain',
-          z.background_color || '#000000', i);
+        const name = z.name || `Zone ${i + 1}`;
+        const x_percent = z.x_percent || 0, y_percent = z.y_percent || 0;
+        const width_percent = z.width_percent || 100, height_percent = z.height_percent || 100;
+        const z_index = z.z_index || 0;
+        const zone_type = z.zone_type || 'content';
+        const fit_mode = z.fit_mode || 'contain';
+        const background_color = z.background_color || '#000000';
+        
+        if (z.id && existingZones.some(ez => ez.id === z.id)) {
+          updateStmt.run(name, x_percent, y_percent, width_percent, height_percent, z_index, zone_type, fit_mode, background_color, i, z.id, req.params.id);
+        } else {
+          insertStmt.run(z.id || uuidv4(), req.params.id, name, x_percent, y_percent, width_percent, height_percent, z_index, zone_type, fit_mode, background_color, i);
+        }
       });
       db.prepare('UPDATE layouts SET updated_at = strftime(\'%s\',\'now\') WHERE id = ?').run(req.params.id);
     }
