@@ -950,8 +950,26 @@ const otaDownloadState = otaDownloadGuard.prodState();   // #146 P3.8: shared si
 
 app.get('/download/apk', (req, res) => {
   const apk = apkCache.get();
+  
+  const isBrowser = req.headers['user-agent'] && req.headers['user-agent'].includes('Mozilla') && !req.headers['user-agent'].includes('okhttp');
+  
   if (!apk.exists) {
-    return res.status(404).send(`<!DOCTYPE html><html><head><title>APK Not Found</title><style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0}div{text-align:center;max-width:500px;padding:24px}h1{color:#f87171;font-size:24px}code{background:#1e293b;padding:2px 8px;border-radius:4px;font-size:14px}p{line-height:1.6;color:#94a3b8}</style></head><body><div><h1>APK Not Available</h1><p>The Android APK has not been compiled yet. In Docker, mount a built APK at <code>/data/ScreenTinker.apk</code>, or use the <a href="/player" style="color:#e65c00">web player</a>.</p></div></body></html>`);
+    if (!req.query.direct && isBrowser) {
+      return res.status(404).send(`<!DOCTYPE html><html><head><title>APK Not Found</title><style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0}div{text-align:center;max-width:500px;padding:24px}h1{color:#f87171;font-size:24px}code{background:#1e293b;padding:2px 8px;border-radius:4px;font-size:14px}p{line-height:1.6;color:#94a3b8}</style></head><body><div><h1>APK Not Available</h1><p>The Android APK has not been compiled yet. In Docker, mount a built APK at <code>/data/ScreenTinker.apk</code>, or use the <a href="/player" style="color:#e65c00">web player</a>.</p></div></body></html>`);
+    }
+    return res.status(404).json({ error: 'APK not found' });
+  }
+
+  // Show landing page for browsers unless they explicitly requested the direct file
+  if (!req.query.direct && isBrowser) {
+    return res.send(`<!DOCTYPE html><html><head><title>Download App TV</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0}div{text-align:center;max-width:500px;padding:24px;background:#1e293b;border-radius:12px;box-shadow:0 10px 15px -3px rgba(0,0,0,0.5)}h1{color:#38bdf8;font-size:24px;margin-top:0}p{line-height:1.6;color:#cbd5e1}.btn{display:inline-block;background:#38bdf8;color:#0f172a;text-decoration:none;padding:14px 28px;border-radius:8px;font-weight:bold;margin-top:16px;transition:opacity 0.2s;font-size:16px}.btn:hover{opacity:0.9}.info{margin-top:32px;font-size:14px;color:#94a3b8;border-top:1px solid #334155;padding-top:20px}</style></head>
+      <body><div><h1>Android TV Player</h1>
+      <p>A aplicação SwiftDisplay está pronta a instalar.<br>Tamanho: ${(apk.size / 1024 / 1024).toFixed(1)} MB</p>
+      <a href="/download/apk?direct=1" class="btn">Transferir APK</a>
+      <div class="info">Na app <strong>Downloader</strong> da TV, insira o link:<br><code style="background:#0f172a;padding:6px 10px;border-radius:6px;display:inline-block;margin-top:12px;color:#38bdf8;font-weight:bold">${req.protocol}://${req.get('host')}/download/apk?direct=1</code></div>
+      </div></body></html>`);
   }
 
   const verdict = otaDownloadGuard.admit(otaDownloadState, getBand());
