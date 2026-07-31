@@ -168,7 +168,7 @@ router.delete('/:id', (req, res) => {
   res.json({ success: true });
 });
 
-const KNOWN_WIDGET_TYPES = new Set(['clock','weather','rss','text','webpage','social','directory-board','directory-search','diag-smoothness']);
+const KNOWN_WIDGET_TYPES = new Set(['clock','weather','rss','text','webpage','social','directory-board','directory-search','diag-smoothness', 'crypto', 'world-clock', 'rollover-text', 'daily-menu', 'property-slide']);
 function renderWidgetHtml(type, config) {
   config = config || {};
   switch (type) {
@@ -183,8 +183,193 @@ function renderWidgetHtml(type, config) {
     case 'directory-board': return renderDirectoryBoard(config);
     case 'directory-search': return renderDirectorySearch(config);
     case 'diag-smoothness': return renderDiagSmoothness(config);
+    case 'crypto': return renderCrypto();
+    case 'world-clock': return renderWorldClock();
+    case 'rollover-text': return renderRolloverText(config);
+    case 'daily-menu': return renderDailyMenu(config);
+    case 'property-slide': return renderPropertySlide(config);
     default: return '<html><body style="color:white;background:black;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><h1>Unknown widget</h1></body></html>';
   }
+}
+
+
+function renderRolloverText(config) {
+  const messages = Array.isArray(config.messages) && config.messages.length > 0 ? config.messages : ['Rollover Text'];
+  const duration = parseInt(config.duration) || 5;
+  const effect = config.effect === 'slide' ? 'slide' : 'fade';
+  const fontSize = config.fontSize || '4vw';
+  const bgColor = config.bgColor || '#000000';
+  const textColor = config.textColor || '#ffffff';
+  const align = config.align || 'center';
+  
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin:0; overflow:hidden; background:${escapeHtml(bgColor)}; color:${escapeHtml(textColor)}; font-family:sans-serif; }
+  .container { position:relative; width:100vw; height:100vh; display:flex; align-items:center; justify-content:${align === 'center' ? 'center' : (align === 'right' ? 'flex-end' : 'flex-start')}; text-align:${escapeHtml(align)}; padding: 0 5vw; box-sizing:border-box; }
+  .msg { position:absolute; left:0; width:100%; padding:0 5vw; box-sizing:border-box; font-size:${escapeHtml(fontSize)}; font-weight:bold; opacity:0; pointer-events:none; }
+  
+  ${effect === 'fade' ? `
+  .msg { transition: opacity 1s ease-in-out; }
+  .msg.active { opacity: 1; z-index: 1; }
+  ` : `
+  .msg { transition: transform 1s ease-in-out, opacity 1s ease-in-out; transform: translateY(100%); opacity:0; }
+  .msg.active { transform: translateY(0); opacity:1; z-index: 1; }
+  .msg.exit { transform: translateY(-100%); opacity:0; }
+  `}
+</style>
+</head>
+<body>
+  <div class="container" id="cont">
+    ${messages.map((m, i) => `<div class="msg ${i===0?'active':''}" id="m${i}">${escapeHtml(m)}</div>`).join('')}
+  </div>
+  <script>
+    const count = ${messages.length};
+    if (count > 1) {
+      let idx = 0;
+      setInterval(() => {
+        const prev = document.getElementById('m' + idx);
+        idx = (idx + 1) % count;
+        const next = document.getElementById('m' + idx);
+        
+        ${effect === 'fade' ? `
+        prev.classList.remove('active');
+        next.classList.add('active');
+        ` : `
+        prev.classList.remove('active');
+        prev.classList.add('exit');
+        next.classList.remove('exit');
+        next.classList.add('active');
+        `}
+      }, ${duration * 1000});
+    }
+  </script>
+</body>
+</html>`;
+}
+
+function renderDailyMenu(config) {
+  const c = config || {};
+  const title = c.title || '';
+  const sections = Array.isArray(c.sections) ? c.sections : [];
+  const currency = c.currency || '€';
+  const theme = c.theme || 'dark';
+
+  let bg = '#111', fg = '#fff', accent = '#f59e0b', font = 'sans-serif';
+  if (theme === 'light') { bg = '#f9fafb'; fg = '#111827'; accent = '#047857'; }
+  else if (theme === 'rustic') { bg = '#3e2723'; fg = '#efebe9'; accent = '#d7ccc8'; font = 'Georgia, serif'; }
+
+  const htmlSections = sections.map(sec => `
+    <div class="menu-section">
+      <div class="section-title">${escapeHtml(sec.name || 'Section')}</div>
+      ${(sec.items || []).map(item => `
+        <div class="menu-item">
+          <div class="item-main">
+            <div class="item-name">${escapeHtml(item.name || '')}</div>
+            <div class="item-price">${escapeHtml(item.price || '')} ${escapeHtml(currency)}</div>
+          </div>
+          ${item.desc ? `<div class="item-desc">${escapeHtml(item.desc)}</div>` : ''}
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin:0; padding:4vw; background:${bg}; color:${fg}; font-family:${font}; box-sizing:border-box; height:100vh; overflow:hidden; display:flex; flex-direction:column; }
+  .title { text-align:center; font-size:5vw; font-weight:bold; margin-bottom:4vw; color:${accent}; text-transform:uppercase; letter-spacing:0.05em; }
+  .menu-grid { display:flex; flex-direction:column; gap:4vw; flex:1; overflow-y:auto; }
+  .section-title { font-size:3.5vw; font-weight:bold; border-bottom:2px solid ${accent}; padding-bottom:1vw; margin-bottom:2vw; color:${accent}; }
+  .menu-item { margin-bottom:2vw; }
+  .item-main { display:flex; justify-content:space-between; align-items:baseline; }
+  .item-name { font-size:2.8vw; font-weight:bold; }
+  .item-price { font-size:2.8vw; font-weight:bold; white-space:nowrap; margin-left:2vw; }
+  .item-desc { font-size:2vw; opacity:0.8; margin-top:0.5vw; }
+</style>
+</head>
+<body>
+  ${title ? `<div class="title">${escapeHtml(title)}</div>` : ''}
+  <div class="menu-grid">
+    ${htmlSections}
+  </div>
+</body>
+</html>`;
+}
+
+function renderPropertySlide(config) {
+  const props = Array.isArray(config.properties) && config.properties.length > 0 ? config.properties : [{title: 'No properties configured'}];
+  const duration = parseInt(config.duration) || 8;
+  const effect = config.transition === 'slide' ? 'slide' : 'fade';
+  
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin:0; overflow:hidden; background:#111; color:#fff; font-family:sans-serif; }
+  .slide { position:absolute; inset:0; display:flex; flex-direction:column; opacity:0; pointer-events:none; }
+  
+  ${effect === 'fade' ? `
+  .slide { transition: opacity 1s ease-in-out; }
+  .slide.active { opacity: 1; z-index: 1; }
+  ` : `
+  .slide { transition: transform 1s ease-in-out, opacity 1s ease-in-out; transform: translateX(100%); opacity:0; }
+  .slide.active { transform: translateX(0); opacity:1; z-index: 1; }
+  .slide.exit { transform: translateX(-100%); opacity:0; }
+  `}
+
+  .bg { position:absolute; inset:0; background-size:cover; background-position:center; opacity:0.6; }
+  .content { position:absolute; bottom:0; left:0; right:0; padding:4vw; background:linear-gradient(transparent, rgba(0,0,0,0.9)); display:flex; flex-direction:column; gap:1vw; }
+  .type-badge { align-self:flex-start; background:#3b82f6; color:#fff; padding:0.5vw 1.5vw; border-radius:1vw; font-size:2vw; font-weight:bold; text-transform:uppercase; }
+  .title { font-size:4vw; font-weight:bold; text-shadow:1px 1px 4px rgba(0,0,0,0.8); }
+  .details { display:flex; gap:3vw; font-size:2.5vw; align-items:center; flex-wrap:wrap; }
+  .price { font-size:3.5vw; font-weight:bold; color:#10b981; }
+  .meta { display:flex; gap:1vw; align-items:center; background:rgba(255,255,255,0.2); padding:0.5vw 1.5vw; border-radius:1vw; }
+</style>
+</head>
+<body>
+  ${props.map((p, i) => `
+    <div class="slide ${i===0?'active':''}" id="s${i}">
+      ${p.image_url ? `<div class="bg" style="background-image:url('${escapeHtml(p.image_url)}')"></div>` : ''}
+      <div class="content">
+        ${p.type ? `<div class="type-badge">${escapeHtml(p.type)}</div>` : ''}
+        <div class="title">${escapeHtml(p.title || '')}</div>
+        <div class="details">
+          ${p.price ? `<div class="price">${escapeHtml(p.price)}</div>` : ''}
+          ${p.rooms ? `<div class="meta">🛏️ ${escapeHtml(p.rooms)}</div>` : ''}
+          ${p.area ? `<div class="meta">📏 ${escapeHtml(p.area)} m²</div>` : ''}
+        </div>
+      </div>
+    </div>
+  `).join('')}
+  <script>
+    const count = ${props.length};
+    if (count > 1) {
+      let idx = 0;
+      setInterval(() => {
+        const prev = document.getElementById('s' + idx);
+        idx = (idx + 1) % count;
+        const next = document.getElementById('s' + idx);
+        
+        ${effect === 'fade' ? `
+        prev.classList.remove('active');
+        next.classList.add('active');
+        ` : `
+        prev.classList.remove('active');
+        prev.classList.add('exit');
+        next.classList.remove('exit');
+        next.classList.add('active');
+        `}
+      }, ${duration * 1000});
+    }
+  </script>
+</body>
+</html>`;
 }
 
 // Render widget as HTML page

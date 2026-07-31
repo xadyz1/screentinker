@@ -6,7 +6,7 @@ const API = (url, opts = {}) => fetch('/api' + url, { headers: { 'Content-Type':
 
 // Widget type ids only — name + desc are looked up via t() so they switch
 // language with the rest of the UI.
-const WIDGET_TYPES = ['clock', 'weather', 'rss', 'text', 'webpage', 'social', 'directory-board', 'directory-search', 'transition', 'crypto', 'world-clock'];
+const WIDGET_TYPES = ['clock', 'weather', 'rss', 'text', 'webpage', 'social', 'directory-board', 'directory-search', 'transition', 'crypto', 'world-clock', 'rollover-text', 'daily-menu', 'property-slide'];
 const WIDGET_ICONS = {
   'clock': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>',
   'weather': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>',
@@ -17,10 +17,13 @@ const WIDGET_ICONS = {
   'transition': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>',
   'directory-board': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><line x1="4" y1="12" x2="20" y2="12"></line><line x1="12" y1="4" x2="12" y2="20"></line></svg>',
   'directory-search': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>',
-  'crypto': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>',
-  'world-clock': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>'
+  'crypto': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></path><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>',
+  'world-clock': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>',
+  'rollover-text': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h16"></path><polyline points="15 3 20 6 15 9"></polyline></svg>',
+  'daily-menu': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18M7 8h10M7 12h10M7 16h10"></path></svg>',
+  'property-slide': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>'
 };
-const widgetTypeName = (id) => { const n = t(`widget.type.${id.replace(/-/g, '_')}.name`); return n && !n.includes('widget.type') ? n : (id === 'crypto' ? 'Live Crypto' : (id === 'world-clock' ? 'World Clock' : id)); };
+const widgetTypeName = (id) => { const n = t(`widget.type.${id.replace(/-/g, '_')}.name`); return n && !n.includes('widget.type') ? n : (id === 'crypto' ? 'Live Crypto' : (id === 'world-clock' ? 'World Clock' : (id === 'rollover-text' ? 'Rollover Text' : (id === 'daily-menu' ? 'Daily Menu' : (id === 'property-slide' ? 'Property Slide' : id))))); };
 const widgetTypeDesc = (id) => { const n = t(`widget.type.${id.replace(/-/g, '_')}.desc`); return n && !n.includes('widget.type') ? n : (id === 'crypto' ? 'Live cryptocurrency ticker' : (id === 'world-clock' ? 'Minimal multi-timezone clock' : '')); };
 
 function escAttr(s) {
@@ -352,6 +355,9 @@ export async function render(container) {
   let editingWidget = null;
   let creatingType = null;
   let dirState = { categories: [], logo_url: '', background_images: [] };
+  let rolloverState = { messages: [] };
+  let menuState = { sections: [] };
+  let propertyState = { properties: [] };
   // Cached widget list from the last load — used to populate the directory-search
   // source-board dropdown without a second fetch.
   let loadedWidgets = [];
@@ -466,6 +472,61 @@ export async function render(container) {
             <button type="button" class="btn btn-secondary btn-sm" id="dbAddCategory" style="margin-top:10px">${t('widget.dir.add_category')}</button>
           </div>`;
         break;
+      
+      case 'rollover-text':
+        rolloverState.messages = Array.isArray(config.messages) ? config.messages.slice() : [''];
+        html += `
+          <div class="form-group"><label>${t('widget.rollover.messages_label')}</label><div id="wRolloverBox"></div></div>
+          <div class="form-group" style="display:flex;gap:12px;flex-wrap:wrap">
+            <div style="flex:1;min-width:140px"><label>${t('widget.rollover.duration_label')}</label><input type="number" id="wRoDur" class="input" value="${config.duration || 5}"></div>
+            <div style="flex:1;min-width:140px"><label>${t('widget.rollover.effect_label')}</label><select id="wRoEff" class="input" style="background:var(--bg-input)">
+              <option value="fade" ${config.effect !== 'slide' ? 'selected' : ''}>${t('widget.rollover.effect_fade')}</option>
+              <option value="slide" ${config.effect === 'slide' ? 'selected' : ''}>${t('widget.rollover.effect_slide')}</option>
+            </select></div>
+          </div>
+          <div class="form-group" style="display:flex;gap:12px;flex-wrap:wrap">
+            <div style="flex:1;min-width:140px"><label>${t('widget.field.font_size_vw')}</label><input type="text" id="wRoSize" class="input" value="${escAttr(config.fontSize || '4vw')}"></div>
+            <div style="flex:1;min-width:140px"><label>${t('widget.rollover.align')}</label><select id="wRoAlign" class="input" style="background:var(--bg-input)">
+              <option value="left" ${config.align === 'left' ? 'selected' : ''}>Left</option>
+              <option value="center" ${!config.align || config.align === 'center' ? 'selected' : ''}>Center</option>
+              <option value="right" ${config.align === 'right' ? 'selected' : ''}>Right</option>
+            </select></div>
+          </div>
+          <div class="form-group" style="display:flex;gap:12px;flex-wrap:wrap">
+            <div style="flex:1;min-width:140px"><label>${t('widget.field.color')}</label><input type="color" id="wRoColor" value="${config.textColor || '#ffffff'}" style="width:100%;height:32px;border:none;background:none;padding:0"></div>
+            <div style="flex:1;min-width:140px"><label>${t('widget.field.background')}</label><input type="color" id="wRoBg" value="${config.bgColor || '#000000'}" style="width:100%;height:32px;border:none;background:none;padding:0"></div>
+          </div>
+        `;
+        break;
+      case 'daily-menu':
+        menuState.sections = Array.isArray(config.sections) ? JSON.parse(JSON.stringify(config.sections)) : [];
+        html += `
+          <div class="form-group"><label>${t('widget.menu.title')}</label><input type="text" id="wMenuTitle" class="input" value="${escAttr(config.title || '')}" placeholder="Menu"></div>
+          <div class="form-group" style="display:flex;gap:12px;flex-wrap:wrap">
+            <div style="flex:1;min-width:140px"><label>${t('widget.menu.currency')}</label><input type="text" id="wMenuCurr" class="input" value="${escAttr(config.currency || '€')}"></div>
+            <div style="flex:1;min-width:140px"><label>${t('widget.dir.theme')}</label><select id="wMenuTheme" class="input" style="background:var(--bg-input)">
+              <option value="dark" ${!config.theme || config.theme === 'dark' ? 'selected' : ''}>${t('widget.dir.theme_dark')}</option>
+              <option value="light" ${config.theme === 'light' ? 'selected' : ''}>${t('widget.dir.theme_light')}</option>
+              <option value="rustic" ${config.theme === 'rustic' ? 'selected' : ''}>Rustic</option>
+            </select></div>
+          </div>
+          <div class="form-group"><label>${t('widget.menu.sections')}</label><div id="wMenuBox"></div></div>
+        `;
+        break;
+      case 'property-slide':
+        propertyState.properties = Array.isArray(config.properties) ? JSON.parse(JSON.stringify(config.properties)) : [];
+        html += `
+          <div class="form-group" style="display:flex;gap:12px;flex-wrap:wrap">
+            <div style="flex:1;min-width:140px"><label>${t('widget.rollover.duration_label')}</label><input type="number" id="wPropDur" class="input" value="${config.duration || 8}"></div>
+            <div style="flex:1;min-width:140px"><label>${t('widget.rollover.effect_label')}</label><select id="wPropEff" class="input" style="background:var(--bg-input)">
+              <option value="fade" ${config.transition !== 'slide' ? 'selected' : ''}>${t('widget.rollover.effect_fade')}</option>
+              <option value="slide" ${config.transition === 'slide' ? 'selected' : ''}>${t('widget.rollover.effect_slide')}</option>
+            </select></div>
+          </div>
+          <div class="form-group"><label>${t('widget.prop.properties')}</label><div id="wPropBox"></div></div>
+        `;
+        break;
+
       case 'directory-search': {
         const boards = (loadedWidgets || []).filter(w => w.widget_type === 'directory-board');
         const sourceField = boards.length
@@ -865,6 +926,118 @@ export async function render(container) {
     showToast(msg, warnings.length ? 'info' : 'success');
   }
 
+
+  // Rollover renderers
+  function renderRollover() {
+    const box = document.getElementById('wRolloverBox');
+    if(!box) return;
+    if (!rolloverState.messages.length) rolloverState.messages = [''];
+    box.innerHTML = rolloverState.messages.map((m, i) => `
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <input type="text" class="input ro-msg-inp" data-idx="${i}" value="${escAttr(m)}" placeholder="Message..." style="flex:1">
+        <button type="button" class="btn btn-secondary btn-sm ro-del-btn" data-idx="${i}">X</button>
+      </div>
+    `).join('') + `<button type="button" class="btn btn-secondary btn-sm" id="roAddBtn">+ ${t('widget.rollover.add_msg')}</button>`;
+    
+    document.querySelectorAll('.ro-msg-inp').forEach(i => i.oninput = (e) => {
+      rolloverState.messages[+e.target.dataset.idx] = e.target.value;
+    });
+    document.querySelectorAll('.ro-del-btn').forEach(b => b.onclick = (e) => {
+      rolloverState.messages.splice(+e.target.dataset.idx, 1);
+      renderRollover();
+    });
+    document.getElementById('roAddBtn').onclick = () => {
+      rolloverState.messages.push('');
+      renderRollover();
+    };
+  }
+
+  // Daily Menu renderers
+  function renderMenu() {
+    const box = document.getElementById('wMenuBox');
+    if(!box) return;
+    box.innerHTML = menuState.sections.map((sec, i) => `
+      <div style="border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:12px;background:var(--bg-card)">
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <input type="text" class="input mn-sec-inp" data-idx="${i}" value="${escAttr(sec.name)}" placeholder="Section Name" style="flex:1;font-weight:bold">
+          <button type="button" class="btn btn-secondary btn-sm mn-sec-del" data-idx="${i}">X</button>
+        </div>
+        <div>
+          ${(sec.items||[]).map((item, j) => `
+            <div style="display:flex;gap:8px;margin-bottom:8px;align-items:flex-start">
+              <div style="flex:1">
+                <input type="text" class="input mn-item-name" data-s="${i}" data-i="${j}" value="${escAttr(item.name)}" placeholder="Item name" style="margin-bottom:4px;font-size:12px">
+                <input type="text" class="input mn-item-desc" data-s="${i}" data-i="${j}" value="${escAttr(item.desc)}" placeholder="Description" style="font-size:11px">
+              </div>
+              <input type="text" class="input mn-item-price" data-s="${i}" data-i="${j}" value="${escAttr(item.price)}" placeholder="12.00" style="width:60px">
+              <button type="button" class="btn btn-secondary btn-sm mn-item-del" data-s="${i}" data-i="${j}">X</button>
+            </div>
+          `).join('')}
+          <button type="button" class="btn btn-secondary btn-sm mn-item-add" data-s="${i}">+ Add Item</button>
+        </div>
+      </div>
+    `).join('') + `<button type="button" class="btn btn-secondary btn-sm" id="mnSecAdd">+ Add Section</button>`;
+    
+    document.querySelectorAll('.mn-sec-inp').forEach(i => i.oninput = (e) => { menuState.sections[+e.target.dataset.idx].name = e.target.value; });
+    document.querySelectorAll('.mn-sec-del').forEach(b => b.onclick = (e) => { menuState.sections.splice(+e.target.dataset.idx, 1); renderMenu(); });
+    document.getElementById('mnSecAdd').onclick = () => { menuState.sections.push({name:'', items:[]}); renderMenu(); };
+    
+    document.querySelectorAll('.mn-item-add').forEach(b => b.onclick = (e) => {
+      menuState.sections[+e.target.dataset.s].items.push({name:'', desc:'', price:''}); renderMenu();
+    });
+    document.querySelectorAll('.mn-item-del').forEach(b => b.onclick = (e) => {
+      menuState.sections[+e.target.dataset.s].items.splice(+e.target.dataset.i, 1); renderMenu();
+    });
+    document.querySelectorAll('.mn-item-name').forEach(i => i.oninput = (e) => { menuState.sections[+e.target.dataset.s].items[+e.target.dataset.i].name = e.target.value; });
+    document.querySelectorAll('.mn-item-desc').forEach(i => i.oninput = (e) => { menuState.sections[+e.target.dataset.s].items[+e.target.dataset.i].desc = e.target.value; });
+    document.querySelectorAll('.mn-item-price').forEach(i => i.oninput = (e) => { menuState.sections[+e.target.dataset.s].items[+e.target.dataset.i].price = e.target.value; });
+  }
+
+  // Property slide renderers
+  function renderProperty() {
+    const box = document.getElementById('wPropBox');
+    if(!box) return;
+    box.innerHTML = propertyState.properties.map((p, i) => `
+      <div style="border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:12px;background:var(--bg-card)">
+        <div style="display:flex;gap:12px;margin-bottom:12px">
+          <div style="flex:1">
+            <input type="text" class="input pr-title" data-idx="${i}" value="${escAttr(p.title)}" placeholder="Property Title / Address" style="margin-bottom:8px">
+            <div style="display:flex;gap:8px">
+              <input type="text" class="input pr-price" data-idx="${i}" value="${escAttr(p.price)}" placeholder="Price" style="flex:1">
+              <input type="text" class="input pr-type" data-idx="${i}" value="${escAttr(p.type)}" placeholder="Sale/Rent" style="flex:1">
+            </div>
+            <div style="display:flex;gap:8px;margin-top:8px">
+              <input type="number" class="input pr-rooms" data-idx="${i}" value="${escAttr(p.rooms)}" placeholder="Rooms" style="flex:1">
+              <input type="number" class="input pr-area" data-idx="${i}" value="${escAttr(p.area)}" placeholder="Area (m²)" style="flex:1">
+            </div>
+          </div>
+          <div style="width:120px;display:flex;flex-direction:column;gap:8px">
+            <img ${p.image_url && p.image_url.startsWith('/api/') ? `data-auth-src="${escAttr(p.image_url)}"` : `src="${escAttr(p.image_url||'')}"`} style="width:100%;height:80px;object-fit:cover;background:#0003;border-radius:3px" onerror="this.style.opacity='0.3'">
+            <button type="button" class="btn btn-secondary btn-sm pr-img-btn" data-idx="${i}">Change Image</button>
+          </div>
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm pr-del" data-idx="${i}">Remove Property</button>
+      </div>
+    `).join('') + `<button type="button" class="btn btn-secondary btn-sm" id="prAddBtn">+ Add Property</button>`;
+    
+    hydrateAuthImages(box);
+
+    document.querySelectorAll('.pr-title').forEach(i => i.oninput = (e) => { propertyState.properties[+e.target.dataset.idx].title = e.target.value; });
+    document.querySelectorAll('.pr-price').forEach(i => i.oninput = (e) => { propertyState.properties[+e.target.dataset.idx].price = e.target.value; });
+    document.querySelectorAll('.pr-type').forEach(i => i.oninput = (e) => { propertyState.properties[+e.target.dataset.idx].type = e.target.value; });
+    document.querySelectorAll('.pr-rooms').forEach(i => i.oninput = (e) => { propertyState.properties[+e.target.dataset.idx].rooms = e.target.value; });
+    document.querySelectorAll('.pr-area').forEach(i => i.oninput = (e) => { propertyState.properties[+e.target.dataset.idx].area = e.target.value; });
+    
+    document.querySelectorAll('.pr-del').forEach(b => b.onclick = (e) => { propertyState.properties.splice(+e.target.dataset.idx, 1); renderProperty(); });
+    document.getElementById('prAddBtn').onclick = () => { propertyState.properties.push({title:'',price:'',type:'',rooms:'',area:'',image_url:''}); renderProperty(); };
+
+    document.querySelectorAll('.pr-img-btn').forEach(b => b.onclick = async (e) => {
+      const idx = +e.target.dataset.idx;
+      const url = await openContentPicker({ multiple: false, title: 'Select Image' });
+      if (url) { propertyState.properties[idx].image_url = url; renderProperty(); }
+    });
+  }
+
   function renderLogoPicker() {
     const box = document.getElementById('wLogoBox');
     if (!box) return;
@@ -960,6 +1133,33 @@ export async function render(container) {
           })),
         })),
       }); break;
+      
+      case 'rollover-text': Object.assign(config, {
+        messages: rolloverState.messages.filter(m => m.trim() !== ''),
+        duration: parseInt(val('wRoDur')) || 5,
+        effect: val('wRoEff'),
+        fontSize: val('wRoSize'),
+        align: val('wRoAlign'),
+        textColor: val('wRoColor'),
+        bgColor: val('wRoBg')
+      }); break;
+      case 'daily-menu': Object.assign(config, {
+        title: val('wMenuTitle'),
+        currency: val('wMenuCurr'),
+        theme: val('wMenuTheme'),
+        sections: menuState.sections.map(s => ({
+          name: s.name,
+          items: s.items.map(i => ({ name: i.name, desc: i.desc, price: i.price }))
+        }))
+      }); break;
+      case 'property-slide': Object.assign(config, {
+        duration: parseInt(val('wPropDur')) || 8,
+        transition: val('wPropEff'),
+        properties: propertyState.properties.map(p => ({
+          title: p.title, price: p.price, type: p.type, rooms: p.rooms, area: p.area, image_url: p.image_url
+        }))
+      }); break;
+
       case 'directory-search': Object.assign(config, {
         source_widget_id: val('wSource') || '',
         title: val('wTitle') || '',
