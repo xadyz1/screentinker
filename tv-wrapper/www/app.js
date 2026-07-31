@@ -40,30 +40,40 @@ function hideLoader() {
   playerContainer.classList.add('active');
 }
 
-function loadPlayer() {
-  if (!isOnline) {
-    showLoader('Sem ligação à Internet. A aguardar rede...');
+async function loadPlayer() {
+  if (!navigator.onLine) {
+    showLoader('A aguardar ligação à Internet...');
+    setTimeout(loadPlayer, CHECK_INTERVAL);
     return;
   }
 
-  statusText.innerText = 'A carregar player...';
+  statusText.innerText = 'A verificar rede...';
   
-  // Set the iframe src
-  playerFrame.src = TARGET_URL;
+  try {
+    // Perform a pre-flight check to avoid loading Chrome's ugly error page in the iframe
+    // if the network says it's online but DNS or routing is still settling during boot.
+    await fetch(TARGET_URL, { mode: 'no-cors', cache: 'no-store' });
+    
+    statusText.innerText = 'A carregar player...';
+    playerFrame.src = TARGET_URL;
 
-  // Wait for iframe to load
-  playerFrame.onload = () => {
-    // Only transition if we successfully loaded (not an error page injected by browser)
-    // For cross-origin we can't inspect the content, so we assume load event = success.
-    playerLoaded = true;
-    hideLoader();
-  };
+    // Wait for iframe to load
+    playerFrame.onload = () => {
+      playerLoaded = true;
+      hideLoader();
+    };
 
-  playerFrame.onerror = () => {
+    playerFrame.onerror = () => {
+      playerLoaded = false;
+      showLoader('Erro ao carregar interface. A tentar novamente...');
+      setTimeout(loadPlayer, CHECK_INTERVAL);
+    };
+  } catch (err) {
+    // Network is actually unreachable or DNS failed
     playerLoaded = false;
-    showLoader('Erro ao carregar. A tentar novamente...');
+    showLoader('A aguardar estabilização da rede...');
     setTimeout(loadPlayer, CHECK_INTERVAL);
-  };
+  }
 }
 
 // Future Signage API - Allows the iframe to communicate with the native wrapper via postMessage
