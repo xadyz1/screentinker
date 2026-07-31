@@ -52,7 +52,11 @@ async function loadPlayer() {
   try {
     // Perform a pre-flight check to avoid loading Chrome's ugly error page in the iframe
     // if the network says it's online but DNS or routing is still settling during boot.
-    await fetch(TARGET_URL, { mode: 'no-cors', cache: 'no-store' });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3s safety timeout
+    
+    await fetch(TARGET_URL, { mode: 'no-cors', cache: 'no-store', signal: controller.signal });
+    clearTimeout(timeoutId);
     
     statusText.innerText = 'A carregar player...';
     playerFrame.src = TARGET_URL;

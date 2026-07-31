@@ -356,13 +356,13 @@ export async function render(container) {
     <div class="modal-overlay" id="widgetModal" style="display:none">
       <div class="modal" style="width:560px">
         <div class="modal-header"><h3 id="widgetModalTitle">${t('widget.configure')}</h3>
-          <button class="btn-icon" onclick="document.getElementById('widgetModal').style.display='none'">
+          <button class="btn-icon" onclick="closeEditor()">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
         <div class="modal-body" id="widgetConfigForm"></div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="document.getElementById('widgetModal').style.display='none'">${t('common.cancel')}</button>
+          <button class="btn btn-secondary" onclick="closeEditor()">${t('common.cancel')}</button>
           <button class="btn btn-secondary" id="previewWidgetBtn">${t('widget.preview')}</button>
           <button class="btn btn-primary" id="saveWidgetBtn">${t('common.save')}</button>
         </div>
@@ -375,9 +375,27 @@ export async function render(container) {
   let dirState = { categories: [], logo_url: '', background_images: [] };
   let rolloverState = { messages: [] };
   let menuState = { sections: [] };
-  let propSlideState = { properties: [] };
+  let propertyState = { properties: [] };
   let biState = { metrics: [] };
   let tqState = { counters: [] };
+  let transState = { renderer: null, from: null, to: null, raf: 0, playing: false, t0: 0, params: {}, focus: null };
+
+  window.closeEditor = function() {
+    document.getElementById('widgetModal').style.display = 'none';
+    editingWidget = null;
+    creatingType = null;
+    dirState = { categories: [], logo_url: '', background_images: [] };
+    rolloverState = { messages: [] };
+    menuState = { sections: [] };
+    propertyState = { properties: [] };
+    biState = { metrics: [] };
+    tqState = { counters: [] };
+    
+    // Stop transition preview if it's running
+    if (transState.raf) cancelAnimationFrame(transState.raf);
+    transState = { renderer: null, from: null, to: null, raf: 0, playing: false, t0: 0, params: {}, focus: null };
+  };
+
   // Cached widget list from the last load — used to populate the directory-search
   // source-board dropdown without a second fetch.
   let loadedWidgets = [];
@@ -622,7 +640,7 @@ export async function render(container) {
             <label>Balcão Associado</label>
             <div style="display: flex; gap: 12px; align-items: center;">
               ${countersField}
-              <a href="#/tickets" class="btn btn-secondary btn-sm" onclick="document.getElementById('widgetModal').style.display='none'">Gerir Balcões</a>
+              <a href="#/tickets" class="btn btn-secondary btn-sm" onclick="closeEditor()">Gerir Balcões</a>
             </div>
           </div>
           <div class="form-group" style="display:flex; gap:16px;">
@@ -751,7 +769,7 @@ export async function render(container) {
   // the chosen set per advance), a WebGL preview of the focused effect crossing two placeholder images,
   // param sliders (from the shader's declared ranges) + duration + scope. Uses the same runtime the
   // player ships (/player/transitions.js), so the preview IS the shipping renderer.
-  let transState = { renderer: null, from: null, to: null, raf: 0, playing: false, t0: 0, params: {}, focus: null };
+
   function ensureTransitionRuntime() {
     if (window.TransitionRenderer && window.__TRANSITION_MANIFEST) return Promise.resolve(true);
     return new Promise((resolve) => {
@@ -1222,7 +1240,7 @@ export async function render(container) {
 
     document.querySelectorAll('.pr-title').forEach(i => i.oninput = (e) => { propertyState.properties[+e.target.dataset.idx].title = e.target.value; });
     document.querySelectorAll('.pr-price').forEach(i => i.oninput = (e) => { propertyState.properties[+e.target.dataset.idx].price = e.target.value; });
-    document.querySelectorAll('.pr-type').forEach(i => i.oninput = (e) => { propertyState.properties[+e.target.dataset.idx].listing_type = e.target.value; });
+    document.querySelectorAll('.pr-type').forEach(i => i.onchange = (e) => { propertyState.properties[+e.target.dataset.idx].listing_type = e.target.value; });
     document.querySelectorAll('.pr-rooms').forEach(i => i.oninput = (e) => { propertyState.properties[+e.target.dataset.idx].bedrooms = e.target.value; });
     document.querySelectorAll('.pr-area').forEach(i => i.oninput = (e) => { propertyState.properties[+e.target.dataset.idx].area_m2 = e.target.value; });
     
@@ -1411,7 +1429,7 @@ export async function render(container) {
       } else {
         await API('/widgets', { method: 'POST', body: JSON.stringify({ widget_type: type, name, config }) });
       }
-      document.getElementById('widgetModal').style.display = 'none';
+      closeEditor();
       showToast(t('widget.toast.saved'), 'success');
       loadWidgets();
     } catch (err) { showToast(err.message, 'error'); }

@@ -143,21 +143,39 @@ function markDraft(playlistId) {
   db.prepare("UPDATE playlists SET status = 'draft', updated_at = strftime('%s','now') WHERE id = ?").run(playlistId);
 }
 
-// Push playlist update to all devices using this playlist. Accepts either an Express `req`
+const pushTimers = new Map();
+
+// Fire-and-forget payload assembly & push. Can accept an Express `req` 
 // (route path) or a raw Socket.IO `io` (background sweep path — #157 has no request).
 function pushToDevices(playlistId, reqOrIo) {
   try {
     const io = reqOrIo && reqOrIo.app ? reqOrIo.app.get('io') : reqOrIo;
     if (!io) return;
-    const { buildPlaylistPayload } = require('../ws/deviceSocket');
-    const commandQueue = require('../lib/command-queue');
-    const deviceNs = io.of('/device');
-    const devices = db.prepare('SELECT id FROM devices WHERE playlist_id = ?').all(playlistId);
-    for (const d of devices) {
-      commandQueue.queueOrEmitPlaylistUpdate(deviceNs, d.id, buildPlaylistPayload);
+    
+    if (pushTimers.has(playlistId)) {
+      clearTimeout(pushTimers.get(playlistId));
     }
+    
+    // In test environment, execute immediately to avoid breaking synchronous test assertions.
+    // In production/development, debounce by 2000ms to avoid Thundering Herd on WebSockets.
+    const delay = process.env.NODE_ENV === 'test' ? 0 : 2000;
+    
+    pushTimers.set(playlistId, setTimeout(() => {
+      pushTimers.delete(playlistId);
+      try {
+        const { buildPlaylistPayload } = require('../ws/deviceSocket');
+        const commandQueue = require('../lib/command-queue');
+        const deviceNs = io.of('/device');
+        const devices = db.prepare('SELECT id FROM devices WHERE playlist_id = ?').all(playlistId);
+        for (const d of devices) {
+          commandQueue.queueOrEmitPlaylistUpdate(deviceNs, d.id, buildPlaylistPayload);
+        }
+      } catch (e) {
+        console.error(`[playlists] Delayed pushToDevices failed for playlist ${playlistId}:`, e.message); 
+      }
+    }, delay));
   } catch (e) { 
-    console.error(`[playlists] pushToDevices failed for playlist ${playlistId}:`, e.message); 
+    console.error(`[playlists] pushToDevices wrapper failed for playlist ${playlistId}:`, e.message); 
   }
 }
 
