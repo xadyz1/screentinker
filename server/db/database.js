@@ -455,6 +455,7 @@ const migrations = [
     last_seen           INTEGER,
     removed_at          INTEGER
   )`,
+  'ALTER TABLE playlists ADD COLUMN layout_id TEXT REFERENCES layouts(id) ON DELETE SET NULL',
   // #widget zero-duration loop: repair any playlist_items with a non-positive duration
   // (esp. duration_sec=0 on a widget), which made the player schedule a 0ms auto-advance
   // -> self-loop + black screen. New writes are floored in routes/assignments.js; this

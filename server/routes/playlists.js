@@ -244,7 +244,18 @@ router.get('/:id', requirePlaylistRead, (req, res) => {
   `).all(req.params.id);
   const displayCount = db.prepare('SELECT COUNT(*) as count FROM devices WHERE playlist_id = ?').get(req.params.id).count;
   for (const it of items) it.schedules = schedulesForItem(it.id); // #156: editor read-path needs the blocks (mirror :351)
-  res.json({ ...req.playlist, items, item_count: items.length, display_count: displayCount });
+  
+  const payload = { ...req.playlist, items, item_count: items.length, display_count: displayCount };
+  
+  if (req.playlist.layout_id) {
+    const layout = db.prepare('SELECT * FROM layouts WHERE id = ?').get(req.playlist.layout_id);
+    if (layout) {
+      layout.zones = db.prepare('SELECT * FROM layout_zones WHERE layout_id = ? ORDER BY sort_order').all(layout.id);
+      payload.layout = layout;
+    }
+  }
+  
+  res.json(payload);
 });
 
 // #104: device-free draft preview payload. Same shape the device player consumes
@@ -256,14 +267,22 @@ const PREVIEW_ORIENTATIONS = new Set(['landscape', 'portrait', 'landscape-flippe
 router.get('/:id/preview-payload', requirePlaylistRead, (req, res) => {
   const { assemblePayload } = require('../ws/deviceSocket');
   const assignments = buildSnapshotItems(req.params.id);
-  const layout = derivePreviewLayout(assignments);
+  
+  let layout = null;
+  if (req.playlist.layout_id) {
+    layout = db.prepare('SELECT * FROM layouts WHERE id = ?').get(req.playlist.layout_id);
+    if (layout) layout.zones = db.prepare('SELECT * FROM layout_zones WHERE layout_id = ? ORDER BY sort_order').all(layout.id);
+  } else {
+    layout = derivePreviewLayout(assignments);
+  }
+  
   const orientation = PREVIEW_ORIENTATIONS.has(req.query.orientation) ? req.query.orientation : 'landscape';
   res.json(assemblePayload({ assignments, layout, orientation, wall_config: null, timezone: null }));
 });
 
 // Update playlist
 router.put('/:id', requirePlaylistWrite, (req, res) => {
-  const { name, description } = req.body;
+  const { name, description, layout_id } = req.body;
   const updates = [];
   const values = [];
   if (name !== undefined) {
@@ -275,10 +294,30 @@ router.put('/:id', requirePlaylistWrite, (req, res) => {
     updates.push('description = ?');
     values.push(description.trim());
   }
+  if (layout_id !== undefined) {
+    updates.push('layout_id = ?');
+    values.push(layout_id || null);
+  }
+  
   if (updates.length > 0) {
     updates.push("updated_at = strftime('%s','now')");
     values.push(req.params.id);
     db.prepare(`UPDATE playlists SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+    
+    // Cleanup orphaned items if layout_id changed
+    if (layout_id !== undefined && layout_id !== req.playlist.layout_id) {
+      if (!layout_id) {
+        db.prepare(`UPDATE playlist_items SET zone_id = NULL WHERE playlist_id = ?`).run(req.params.id);
+      } else {
+        const validZones = db.prepare(`SELECT id FROM layout_zones WHERE layout_id = ?`).all(layout_id).map(z => z.id);
+        if (validZones.length === 0) {
+          db.prepare(`UPDATE playlist_items SET zone_id = NULL WHERE playlist_id = ?`).run(req.params.id);
+        } else {
+          const ph = validZones.map(() => '?').join(',');
+          db.prepare(`UPDATE playlist_items SET zone_id = NULL WHERE playlist_id = ? AND zone_id NOT IN (${ph})`).run(req.params.id, ...validZones);
+        }
+      }
+    }
   }
   res.json(db.prepare('SELECT * FROM playlists WHERE id = ?').get(req.params.id));
 });
