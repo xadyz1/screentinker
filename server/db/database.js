@@ -17,73 +17,95 @@ const dbOptions = {};
 if (config.bunnyDbUrl && config.bunnyDbAuthToken) {
   dbOptions.syncUrl = config.bunnyDbUrl;
   dbOptions.authToken = config.bunnyDbAuthToken;
-  dbOptions.syncInterval = 2000;
+  // syncInterval is in SECONDS (not ms) per the libsql embedded-replica API.
+  // A 60-second background sync is generous: writes are cheap locally and the
+  // replica eventually converges. Set BUNNY_SYNC_INTERVAL_SECS in env to tune.
+  dbOptions.syncInterval = parseInt(process.env.BUNNY_SYNC_INTERVAL_SECS) || 60;
 }
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+const isNetworkError = (err) => {
+  const msg = err?.message || '';
+  return /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|EAI_AGAIN|network|dns|connect/i.test(msg)
+    || msg.includes('failed to fetch') || msg.includes('UrlParseError');
+};
+
+const isMalformedError = (err) => {
+  const msg = err?.message || '';
+  return /malform|corrupt|file is not a database/i.test(msg);
+};
+
+// ── Open Database (with resilient boot) ──────────────────────────────────────
 let db;
-try {
-  db = new Database(config.dbPath, dbOptions);
-  if (dbOptions.syncUrl) {
-    console.log("Before sync"); db.sync(); console.log("After sync");
+
+function openDb(opts) {
+  const instance = new Database(config.dbPath, opts);
+  // Initial sync for embedded replica: network failures are non-fatal — we
+  // continue with the local copy. Only hard corruption should abort boot.
+  if (opts.syncUrl) {
+    try {
+      instance.sync();
+    } catch (syncErr) {
+      if (isNetworkError(syncErr)) {
+        console.warn('[boot] libsql initial sync failed — continuing with local replica. Reason:', syncErr.message);
+      } else {
+        // Unexpected non-network sync error: re-throw so the outer handler can
+        // attempt recovery (malformed case) or abort cleanly.
+        throw syncErr;
+      }
+    }
   }
+  return instance;
+}
+
+try {
+  db = openDb(dbOptions);
 } catch (e) {
-  if (e.message && e.message.includes('malformed')) {
-    console.error('[boot] Database is malformed, attempting auto-recovery...');
+  if (isMalformedError(e)) {
+    console.error('[boot] Database appears malformed — attempting sqlite3 .recover ...');
     try {
       const { execSync } = require('child_process');
       const recoveredPath = config.dbPath + '.recovered';
       execSync(`sqlite3 "${config.dbPath}" ".recover" | sqlite3 "${recoveredPath}"`);
       fs.renameSync(config.dbPath, config.dbPath + '.corrupted.' + Date.now());
       fs.renameSync(recoveredPath, config.dbPath);
-      console.error('[boot] Auto-recovery successful. Reopening...');
-      db = new Database(config.dbPath, dbOptions);
-      if (dbOptions.syncUrl) {
-        db.sync();
-      }
+      console.warn('[boot] Auto-recovery successful. Reopening...');
+      db = openDb(dbOptions);
     } catch (recoverErr) {
-      console.error('[boot] Auto-recovery failed:', recoverErr);
-      throw e;
+      console.error('[boot] Auto-recovery failed:', recoverErr.message);
+      throw e; // fatal — cannot start without a usable database
     }
   } else {
-    throw e;
+    throw e; // fatal — unexpected error opening the db file
   }
 }
 
-// Safe background sync debouncer
-let _syncPending = false;
-let _syncRunning = false;
-let _syncTimer = null;
-
-function requestDbSync() {
-  if (!dbOptions.syncUrl || typeof db.sync !== 'function') return;
-  _syncPending = true;
-  if (_syncRunning || _syncTimer) return;
-
-  _syncTimer = setTimeout(() => {
-    _syncTimer = null;
-    if (_syncRunning || !_syncPending || db.inTransaction) return;
-    _syncRunning = true;
-    _syncPending = false;
-    try {
-      db.sync();
-    } catch (err) {
-      console.error('[libsql] Auto-sync background error:', err.message);
-    } finally {
-      _syncRunning = false;
-    }
-  }, 1000);
-}
-
-// Enable foreign keys (and WAL mode if supported)
+// ── Pragmas ───────────────────────────────────────────────────────────────────
+// WAL mode: libsql embedded-replica manages its own WAL and does NOT support
+// the journal_mode pragma — attempting it throws. In local-only mode we WANT
+// WAL for concurrent readers. We detect support at runtime.
 try {
-  db.pragma('journal_mode = WAL');
-} catch (e) {
-  console.log('Skipping journal_mode pragma for libsql sync mode');
+  const result = db.pragma('journal_mode = WAL');
+  // result is [{journal_mode:'wal'}] from libsql; plain sqlite3 returns the same.
+  const mode = Array.isArray(result) ? result[0]?.journal_mode : result;
+  if (mode && mode !== 'wal') {
+    console.warn(`[boot] journal_mode pragma returned '${mode}' — WAL may not be active.`);
+  }
+} catch (pragmaErr) {
+  // Expected for libsql embedded-replica (syncUrl configured): the Rust layer
+  // owns the WAL and rejects the pragma. Log once, do not abort.
+  console.log('[boot] journal_mode=WAL pragma not supported in this libsql mode:', pragmaErr.message);
 }
+
 try {
   db.pragma('foreign_keys = ON');
-} catch (e) {
-  console.log('Skipping foreign_keys pragma');
+} catch (fkErr) {
+  // Unexpected — foreign_keys pragma is supported in both libsql and sqlite3.
+  // Log visibly rather than silently swallowing.
+  console.error('[boot] WARN: Could not enable foreign_keys pragma:', fkErr.message);
 }
+
+
 
 // Run schema
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
@@ -1073,4 +1095,4 @@ try {
 const { verifyAndRepairSchema } = require('../lib/schema-check');
 verifyAndRepairSchema(db);
 
-module.exports = { db, pruneTelemetry, pruneScreenshots, pruneStatusLog, getMaintenanceStats, requestDbSync };
+module.exports = { db, pruneTelemetry, pruneScreenshots, pruneStatusLog, getMaintenanceStats };
