@@ -684,6 +684,8 @@ function inlineEdit(playlist, field) {
     input.addEventListener('blur', save);
     input.addEventListener('keydown', (e) => { if (e.key === 'Escape') { input.value = current; input.blur(); } });
   }
+}
+
 async function showChangeLayoutModal(playlist, container) {
   const modal = document.createElement('div');
   modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1000';
