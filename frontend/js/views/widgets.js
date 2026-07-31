@@ -476,54 +476,58 @@ export async function render(container) {
       case 'rollover-text':
         rolloverState.messages = Array.isArray(config.messages) ? config.messages.slice() : [''];
         html += `
-          <div class="form-group"><label>${t('widget.rollover.messages_label')}</label><div id="wRolloverBox"></div></div>
+          <div class="form-group"><label>${t('widget.rollover.messages_label') || 'Mensagens'}</label><div id="wRolloverBox"></div></div>
           <div class="form-group" style="display:flex;gap:12px;flex-wrap:wrap">
-            <div style="flex:1;min-width:140px"><label>${t('widget.rollover.duration_label')}</label><input type="number" id="wRoDur" class="input" value="${config.duration || 5}"></div>
-            <div style="flex:1;min-width:140px"><label>${t('widget.rollover.effect_label')}</label><select id="wRoEff" class="input" style="background:var(--bg-input)">
-              <option value="fade" ${config.effect !== 'slide' ? 'selected' : ''}>${t('widget.rollover.effect_fade')}</option>
-              <option value="slide" ${config.effect === 'slide' ? 'selected' : ''}>${t('widget.rollover.effect_slide')}</option>
+            <div style="flex:1;min-width:140px"><label>Duração (s)</label><input type="number" id="wRoDur" class="input" value="${config.duration_sec || 5}"></div>
+            <div style="flex:1;min-width:140px"><label>Transição</label><select id="wRoEff" class="input" style="background:var(--bg-input)">
+              <option value="fade" ${config.transition !== 'slide' && config.transition !== 'none' ? 'selected' : ''}>Fade</option>
+              <option value="slide" ${config.transition === 'slide' ? 'selected' : ''}>Slide</option>
+              <option value="none" ${config.transition === 'none' ? 'selected' : ''}>None</option>
             </select></div>
           </div>
           <div class="form-group" style="display:flex;gap:12px;flex-wrap:wrap">
-            <div style="flex:1;min-width:140px"><label>${t('widget.field.font_size_vw')}</label><input type="text" id="wRoSize" class="input" value="${escAttr(config.fontSize || '4vw')}"></div>
-            <div style="flex:1;min-width:140px"><label>${t('widget.rollover.align')}</label><select id="wRoAlign" class="input" style="background:var(--bg-input)">
-              <option value="left" ${config.align === 'left' ? 'selected' : ''}>Left</option>
-              <option value="center" ${!config.align || config.align === 'center' ? 'selected' : ''}>Center</option>
-              <option value="right" ${config.align === 'right' ? 'selected' : ''}>Right</option>
+            <div style="flex:1;min-width:140px"><label>Tamanho da fonte</label><select id="wRoSize" class="input" style="background:var(--bg-input)">
+              <option value="small" ${config.font_size === 'small' ? 'selected' : ''}>Pequeno</option>
+              <option value="medium" ${!config.font_size || config.font_size === 'medium' ? 'selected' : ''}>Médio</option>
+              <option value="large" ${config.font_size === 'large' ? 'selected' : ''}>Grande</option>
+              <option value="xlarge" ${config.font_size === 'xlarge' ? 'selected' : ''}>Muito grande</option>
+            </select></div>
+            <div style="flex:1;min-width:140px"><label>Alinhamento</label><select id="wRoAlign" class="input" style="background:var(--bg-input)">
+              <option value="left" ${config.align === 'left' ? 'selected' : ''}>Esquerda</option>
+              <option value="center" ${!config.align || config.align === 'center' ? 'selected' : ''}>Centro</option>
+              <option value="right" ${config.align === 'right' ? 'selected' : ''}>Direita</option>
             </select></div>
           </div>
           <div class="form-group" style="display:flex;gap:12px;flex-wrap:wrap">
-            <div style="flex:1;min-width:140px"><label>${t('widget.field.color')}</label><input type="color" id="wRoColor" value="${config.textColor || '#ffffff'}" style="width:100%;height:32px;border:none;background:none;padding:0"></div>
-            <div style="flex:1;min-width:140px"><label>${t('widget.field.background')}</label><input type="color" id="wRoBg" value="${config.bgColor || '#000000'}" style="width:100%;height:32px;border:none;background:none;padding:0"></div>
+            <div style="flex:1;min-width:140px"><label>Cor do texto</label><input type="color" id="wRoColor" value="${config.text_color || '#ffffff'}" style="width:100%;height:32px;border:none;background:none;padding:0"></div>
+            <div style="flex:1;min-width:140px"><label>Cor de fundo</label><input type="color" id="wRoBg" value="${config.bg_color || '#000000'}" style="width:100%;height:32px;border:none;background:none;padding:0"></div>
           </div>
         `;
         break;
       case 'daily-menu':
         menuState.sections = Array.isArray(config.sections) ? JSON.parse(JSON.stringify(config.sections)) : [];
         html += `
-          <div class="form-group"><label>${t('widget.menu.title')}</label><input type="text" id="wMenuTitle" class="input" value="${escAttr(config.title || '')}" placeholder="Menu"></div>
-          <div class="form-group" style="display:flex;gap:12px;flex-wrap:wrap">
-            <div style="flex:1;min-width:140px"><label>${t('widget.menu.currency')}</label><input type="text" id="wMenuCurr" class="input" value="${escAttr(config.currency || '€')}"></div>
-            <div style="flex:1;min-width:140px"><label>${t('widget.dir.theme')}</label><select id="wMenuTheme" class="input" style="background:var(--bg-input)">
-              <option value="dark" ${!config.theme || config.theme === 'dark' ? 'selected' : ''}>${t('widget.dir.theme_dark')}</option>
-              <option value="light" ${config.theme === 'light' ? 'selected' : ''}>${t('widget.dir.theme_light')}</option>
-              <option value="rustic" ${config.theme === 'rustic' ? 'selected' : ''}>Rustic</option>
-            </select></div>
+          <div class="form-group"><label>Nome do estabelecimento</label><input type="text" id="wMenuTitle" class="input" value="${escAttr(config.establishment_name || '')}" placeholder="Café Central"></div>
+          <div class="form-group" style="max-width:200px">
+            <label>Moeda</label>
+            <select id="wMenuCurr" class="input" style="background:var(--bg-input)">
+              <option value="€" ${config.currency === '€' || !config.currency ? 'selected' : ''}>€</option>
+              <option value="$" ${config.currency === '$' ? 'selected' : ''}>$</option>
+              <option value="£" ${config.currency === '£' ? 'selected' : ''}>£</option>
+              <option value="outro" ${config.currency === 'outro' ? 'selected' : ''}>Outro</option>
+            </select>
           </div>
-          <div class="form-group"><label>${t('widget.menu.sections')}</label><div id="wMenuBox"></div></div>
+          <div class="form-group"><label>Secções do Menu</label><div id="wMenuBox"></div></div>
         `;
         break;
       case 'property-slide':
         propertyState.properties = Array.isArray(config.properties) ? JSON.parse(JSON.stringify(config.properties)) : [];
         html += `
-          <div class="form-group" style="display:flex;gap:12px;flex-wrap:wrap">
-            <div style="flex:1;min-width:140px"><label>${t('widget.rollover.duration_label')}</label><input type="number" id="wPropDur" class="input" value="${config.duration || 8}"></div>
-            <div style="flex:1;min-width:140px"><label>${t('widget.rollover.effect_label')}</label><select id="wPropEff" class="input" style="background:var(--bg-input)">
-              <option value="fade" ${config.transition !== 'slide' ? 'selected' : ''}>${t('widget.rollover.effect_fade')}</option>
-              <option value="slide" ${config.transition === 'slide' ? 'selected' : ''}>${t('widget.rollover.effect_slide')}</option>
-            </select></div>
+          <div class="form-group" style="max-width:200px">
+            <label>Duração por propriedade (s)</label>
+            <input type="number" id="wPropDur" class="input" value="${config.duration_sec || 8}">
           </div>
-          <div class="form-group"><label>${t('widget.prop.properties')}</label><div id="wPropBox"></div></div>
+          <div class="form-group"><label>Propriedades</label><div id="wPropBox"></div></div>
         `;
         break;
 
@@ -614,6 +618,9 @@ export async function render(container) {
     }
 
     if (type === 'transition') initTransitionForm(config);
+    if (type === 'rollover-text') renderRollover();
+    if (type === 'daily-menu') renderMenu();
+    if (type === 'property-slide') renderProperty();
   }
 
   // Live transition picker: a CHECKLIST of effects (pick one or several — the player randomizes among
@@ -959,7 +966,7 @@ export async function render(container) {
     box.innerHTML = menuState.sections.map((sec, i) => `
       <div style="border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:12px;background:var(--bg-card)">
         <div style="display:flex;gap:8px;margin-bottom:12px">
-          <input type="text" class="input mn-sec-inp" data-idx="${i}" value="${escAttr(sec.name)}" placeholder="Section Name" style="flex:1;font-weight:bold">
+          <input type="text" class="input mn-sec-inp" data-idx="${i}" value="${escAttr(sec.title)}" placeholder="Section Name" style="flex:1;font-weight:bold">
           <button type="button" class="btn btn-secondary btn-sm mn-sec-del" data-idx="${i}">X</button>
         </div>
         <div>
@@ -967,7 +974,7 @@ export async function render(container) {
             <div style="display:flex;gap:8px;margin-bottom:8px;align-items:flex-start">
               <div style="flex:1">
                 <input type="text" class="input mn-item-name" data-s="${i}" data-i="${j}" value="${escAttr(item.name)}" placeholder="Item name" style="margin-bottom:4px;font-size:12px">
-                <input type="text" class="input mn-item-desc" data-s="${i}" data-i="${j}" value="${escAttr(item.desc)}" placeholder="Description" style="font-size:11px">
+                <input type="text" class="input mn-item-desc" data-s="${i}" data-i="${j}" value="${escAttr(item.description)}" placeholder="Description" style="font-size:11px">
               </div>
               <input type="text" class="input mn-item-price" data-s="${i}" data-i="${j}" value="${escAttr(item.price)}" placeholder="12.00" style="width:60px">
               <button type="button" class="btn btn-secondary btn-sm mn-item-del" data-s="${i}" data-i="${j}">X</button>
@@ -978,18 +985,18 @@ export async function render(container) {
       </div>
     `).join('') + `<button type="button" class="btn btn-secondary btn-sm" id="mnSecAdd">+ Add Section</button>`;
     
-    document.querySelectorAll('.mn-sec-inp').forEach(i => i.oninput = (e) => { menuState.sections[+e.target.dataset.idx].name = e.target.value; });
+    document.querySelectorAll('.mn-sec-inp').forEach(i => i.oninput = (e) => { menuState.sections[+e.target.dataset.idx].title = e.target.value; });
     document.querySelectorAll('.mn-sec-del').forEach(b => b.onclick = (e) => { menuState.sections.splice(+e.target.dataset.idx, 1); renderMenu(); });
-    document.getElementById('mnSecAdd').onclick = () => { menuState.sections.push({name:'', items:[]}); renderMenu(); };
+    document.getElementById('mnSecAdd').onclick = () => { menuState.sections.push({title:'', items:[]}); renderMenu(); };
     
     document.querySelectorAll('.mn-item-add').forEach(b => b.onclick = (e) => {
-      menuState.sections[+e.target.dataset.s].items.push({name:'', desc:'', price:''}); renderMenu();
+      menuState.sections[+e.target.dataset.s].items.push({name:'', description:'', price:''}); renderMenu();
     });
     document.querySelectorAll('.mn-item-del').forEach(b => b.onclick = (e) => {
       menuState.sections[+e.target.dataset.s].items.splice(+e.target.dataset.i, 1); renderMenu();
     });
     document.querySelectorAll('.mn-item-name').forEach(i => i.oninput = (e) => { menuState.sections[+e.target.dataset.s].items[+e.target.dataset.i].name = e.target.value; });
-    document.querySelectorAll('.mn-item-desc').forEach(i => i.oninput = (e) => { menuState.sections[+e.target.dataset.s].items[+e.target.dataset.i].desc = e.target.value; });
+    document.querySelectorAll('.mn-item-desc').forEach(i => i.oninput = (e) => { menuState.sections[+e.target.dataset.s].items[+e.target.dataset.i].description = e.target.value; });
     document.querySelectorAll('.mn-item-price').forEach(i => i.oninput = (e) => { menuState.sections[+e.target.dataset.s].items[+e.target.dataset.i].price = e.target.value; });
   }
 
@@ -1004,11 +1011,14 @@ export async function render(container) {
             <input type="text" class="input pr-title" data-idx="${i}" value="${escAttr(p.title)}" placeholder="Property Title / Address" style="margin-bottom:8px">
             <div style="display:flex;gap:8px">
               <input type="text" class="input pr-price" data-idx="${i}" value="${escAttr(p.price)}" placeholder="Price" style="flex:1">
-              <input type="text" class="input pr-type" data-idx="${i}" value="${escAttr(p.type)}" placeholder="Sale/Rent" style="flex:1">
+              <select class="input pr-type" data-idx="${i}" style="flex:1;background:var(--bg-input)">
+                <option value="venda" ${p.listing_type !== 'arrendamento' ? 'selected' : ''}>Venda</option>
+                <option value="arrendamento" ${p.listing_type === 'arrendamento' ? 'selected' : ''}>Arrendamento</option>
+              </select>
             </div>
             <div style="display:flex;gap:8px;margin-top:8px">
-              <input type="number" class="input pr-rooms" data-idx="${i}" value="${escAttr(p.rooms)}" placeholder="Rooms" style="flex:1">
-              <input type="number" class="input pr-area" data-idx="${i}" value="${escAttr(p.area)}" placeholder="Area (m²)" style="flex:1">
+              <input type="number" class="input pr-rooms" data-idx="${i}" value="${escAttr(p.bedrooms)}" placeholder="Rooms" style="flex:1">
+              <input type="number" class="input pr-area" data-idx="${i}" value="${escAttr(p.area_m2)}" placeholder="Area (m²)" style="flex:1">
             </div>
           </div>
           <div style="width:120px;display:flex;flex-direction:column;gap:8px">
@@ -1024,12 +1034,12 @@ export async function render(container) {
 
     document.querySelectorAll('.pr-title').forEach(i => i.oninput = (e) => { propertyState.properties[+e.target.dataset.idx].title = e.target.value; });
     document.querySelectorAll('.pr-price').forEach(i => i.oninput = (e) => { propertyState.properties[+e.target.dataset.idx].price = e.target.value; });
-    document.querySelectorAll('.pr-type').forEach(i => i.oninput = (e) => { propertyState.properties[+e.target.dataset.idx].type = e.target.value; });
-    document.querySelectorAll('.pr-rooms').forEach(i => i.oninput = (e) => { propertyState.properties[+e.target.dataset.idx].rooms = e.target.value; });
-    document.querySelectorAll('.pr-area').forEach(i => i.oninput = (e) => { propertyState.properties[+e.target.dataset.idx].area = e.target.value; });
+    document.querySelectorAll('.pr-type').forEach(i => i.oninput = (e) => { propertyState.properties[+e.target.dataset.idx].listing_type = e.target.value; });
+    document.querySelectorAll('.pr-rooms').forEach(i => i.oninput = (e) => { propertyState.properties[+e.target.dataset.idx].bedrooms = e.target.value; });
+    document.querySelectorAll('.pr-area').forEach(i => i.oninput = (e) => { propertyState.properties[+e.target.dataset.idx].area_m2 = e.target.value; });
     
     document.querySelectorAll('.pr-del').forEach(b => b.onclick = (e) => { propertyState.properties.splice(+e.target.dataset.idx, 1); renderProperty(); });
-    document.getElementById('prAddBtn').onclick = () => { propertyState.properties.push({title:'',price:'',type:'',rooms:'',area:'',image_url:''}); renderProperty(); };
+    document.getElementById('prAddBtn').onclick = () => { propertyState.properties.push({title:'',price:'',listing_type:'venda',bedrooms:'',area_m2:'',image_url:''}); renderProperty(); };
 
     document.querySelectorAll('.pr-img-btn').forEach(b => b.onclick = async (e) => {
       const idx = +e.target.dataset.idx;
@@ -1136,27 +1146,25 @@ export async function render(container) {
       
       case 'rollover-text': Object.assign(config, {
         messages: rolloverState.messages.filter(m => m.trim() !== ''),
-        duration: parseInt(val('wRoDur')) || 5,
-        effect: val('wRoEff'),
-        fontSize: val('wRoSize'),
+        duration_sec: parseInt(val('wRoDur')) || 5,
+        transition: val('wRoEff'),
+        font_size: val('wRoSize'),
         align: val('wRoAlign'),
-        textColor: val('wRoColor'),
-        bgColor: val('wRoBg')
+        text_color: val('wRoColor'),
+        bg_color: val('wRoBg')
       }); break;
       case 'daily-menu': Object.assign(config, {
-        title: val('wMenuTitle'),
+        establishment_name: val('wMenuTitle'),
         currency: val('wMenuCurr'),
-        theme: val('wMenuTheme'),
         sections: menuState.sections.map(s => ({
-          name: s.name,
-          items: s.items.map(i => ({ name: i.name, desc: i.desc, price: i.price }))
+          title: s.title,
+          items: s.items.map(i => ({ name: i.name, description: i.description, price: i.price }))
         }))
       }); break;
       case 'property-slide': Object.assign(config, {
-        duration: parseInt(val('wPropDur')) || 8,
-        transition: val('wPropEff'),
+        duration_sec: parseInt(val('wPropDur')) || 8,
         properties: propertyState.properties.map(p => ({
-          title: p.title, price: p.price, type: p.type, rooms: p.rooms, area: p.area, image_url: p.image_url
+          title: p.title, price: p.price, listing_type: p.listing_type, bedrooms: p.bedrooms, area_m2: p.area_m2, image_url: p.image_url
         }))
       }); break;
 
