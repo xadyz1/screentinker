@@ -501,7 +501,7 @@ async function loadSystem() {
                 <button class="btn btn-secondary btn-sm" id="copyCmdBtn">${t('admin.copy_command') || 'Copy'}</button>
               </div>
               <p style="font-size:12px;color:var(--text-muted);margin-bottom:8px">${t('admin.manual_update_desc') || 'Run this command on the server:'}</p>
-              <pre style="font-size:11px;margin:0;background:var(--bg-primary);padding:8px;border-radius:4px;white-space:pre-wrap;word-break:break-all">${esc(data.instructions)}</pre>
+              <pre style="font-size:11px;margin:0;background:var(--bg-primary);padding:8px;border-radius:4px;white-space:pre-wrap;word-break:break-all">docker compose -f /opt/screentinker/docker-compose.yml pull && docker compose -f /opt/screentinker/docker-compose.yml up -d</pre>
             </div>`;
           document.getElementById('copyCmdBtn')?.addEventListener('click', () => {
             const pre = resultEl.querySelector('pre');
