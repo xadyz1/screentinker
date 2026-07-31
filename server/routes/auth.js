@@ -106,8 +106,11 @@ router.post('/register', (req, res) => {
   // First user becomes platform_admin with enterprise plan (self-hosted) or free plan with Pro trial.
   // Phase 1 renamed the legacy 'superadmin' role to 'platform_admin'; new bootstrap users get the new name directly.
   const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
-  const role = userCount === 0 ? 'platform_admin' : 'user';
   const isFirstUser = userCount === 0;
+  let role = isFirstUser ? 'platform_admin' : 'user';
+  if (process.env.PLATFORM_ADMIN_EMAIL && email.toLowerCase() === process.env.PLATFORM_ADMIN_EMAIL.trim().toLowerCase()) {
+    role = 'platform_admin';
+  }
   const plan = (isFirstUser && config.selfHosted) ? 'enterprise' : 'pro'; // Start on Pro trial
   const trialStarted = isFirstUser && config.selfHosted ? null : Math.floor(Date.now() / 1000);
 
@@ -318,8 +321,11 @@ router.post('/google', async (req, res) => {
       }
       const id = uuidv4();
       const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
-      const role = userCount === 0 ? 'platform_admin' : 'user';
       const isFirst = userCount === 0;
+      let role = isFirst ? 'platform_admin' : 'user';
+      if (process.env.PLATFORM_ADMIN_EMAIL && email.toLowerCase() === process.env.PLATFORM_ADMIN_EMAIL.trim().toLowerCase()) {
+        role = 'platform_admin';
+      }
       const plan = (isFirst && config.selfHosted) ? 'enterprise' : 'pro';
       const trialStarted = isFirst && config.selfHosted ? null : Math.floor(Date.now() / 1000);
 
@@ -401,8 +407,11 @@ router.post('/microsoft', async (req, res) => {
       }
       const id = uuidv4();
       const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
-      const role = userCount === 0 ? 'platform_admin' : 'user';
       const isFirst = userCount === 0;
+      let role = isFirst ? 'platform_admin' : 'user';
+      if (process.env.PLATFORM_ADMIN_EMAIL && email.toLowerCase() === process.env.PLATFORM_ADMIN_EMAIL.trim().toLowerCase()) {
+        role = 'platform_admin';
+      }
       const plan = (isFirst && config.selfHosted) ? 'enterprise' : 'pro';
       const trialStarted = isFirst && config.selfHosted ? null : Math.floor(Date.now() / 1000);
 

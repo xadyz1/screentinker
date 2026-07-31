@@ -1,1 +1,33 @@
-<html><head><script>window.location.href='https://swiftdisplay.pt/public/display/SEU_ID_DE_ECRA';</script></head><body>A carregar player...</body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>SwiftDisplay Player</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  
+  <!-- Main Loader UI -->
+  <div id="loader-ui" class="active">
+    <div class="logo-container">
+      <div class="spinner"></div>
+      <h1 class="brand-title">SwiftDisplay</h1>
+      <p class="brand-subtitle">Player</p>
+    </div>
+    <div class="status-container">
+      <p id="status-text">A iniciar...</p>
+    </div>
+  </div>
+
+  <!-- Player Container -->
+  <div id="player-container">
+    <iframe id="player-frame" src="about:blank" allow="autoplay; fullscreen" frameborder="0"></iframe>
+  </div>
+
+  <!-- Future Signage Extensions Overlay Container -->
+  <div id="overlays-container"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

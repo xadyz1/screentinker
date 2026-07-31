@@ -1023,6 +1023,19 @@ server.listen(listenPort, '0.0.0.0', () => {
 ║  Listening on all interfaces (0.0.0.0)           ║
 ╚══════════════════════════════════════════════════╝
   `);
+  
+  // Enforce persistent platform admin if configured via env
+  if (process.env.PLATFORM_ADMIN_EMAIL) {
+    try {
+      const email = process.env.PLATFORM_ADMIN_EMAIL.trim().toLowerCase();
+      const res = db.prepare("UPDATE users SET role = 'platform_admin' WHERE email = ? AND role != 'platform_admin'").run(email);
+      if (res.changes > 0) {
+        console.log(`[BOOTSTRAP] Promoted ${email} to platform_admin (via PLATFORM_ADMIN_EMAIL)`);
+      }
+    } catch (e) {
+      console.error(`[BOOTSTRAP] Failed to enforce PLATFORM_ADMIN_EMAIL: ${e.message}`);
+    }
+  }
 
   // Email transport diagnostics — a partially-configured transport is a real
   // misconfiguration (some fields set, others missing) and gets a loud line;

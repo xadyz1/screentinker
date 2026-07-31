@@ -1,45 +1,84 @@
 :root {
-  /* Cores de Destaque */
+  /* Globais Estruturais e Branding */
   --accent: #ff6b00;
   --accent-hover: #e65c00;
-  --accent-dim: rgba(255, 107, 0, 0.15);
-  --accent-glow: rgba(255, 107, 0, 0.35);
+  --accent-dim: rgba(255, 107, 0, 0.12);
+  --accent-glow: rgba(255, 107, 0, 0.18);
+  --accent-rgb: 255, 107, 0;
   
-  /* Sistema de Feedback */
-  --success: #34d399;
-  --danger: #ef4444;
-  --warning: #fbbf24;
+  --success: #16a34a;
+  --danger: #dc2626;
+  --warning: #d97706;
+  --success-dim: rgba(22, 163, 74, 0.12);
+  --danger-dim: rgba(220, 38, 38, 0.12);
+  --warning-dim: rgba(217, 119, 6, 0.12);
   
-  /* Borda arredondada / Glassmorphism */
   --radius-sm: 8px;
   --radius-md: 14px;
   --radius-lg: 20px;
   --radius-xl: 28px;
+  --radius: var(--radius-sm);
   
   --transition: 0.22s cubic-bezier(0.4, 0, 0.2, 1);
   --sidebar-width: 220px;
 }
 
-[data-theme="dark"], :root {
+/* 
+  DARK THEME (Default) 
+*/
+:root, [data-theme="dark"] {
   --bg-base: #09090b;
+  --bg-base-rgb: 9, 9, 11;
   --bg-surface: #111113;
+  --bg-surface-rgb: 17, 17, 19;
   --bg-card: #1a1a1e;
   --bg-card-hover: #242429;
   --bg-input: #0d0d10;
+  
   --text-primary: #ffffff;
+  --text-primary-rgb: 255, 255, 255;
   --text-secondary: #a1a1aa;
   --text-muted: #6b7280;
+  
   --border: #27272a;
   --border-highlight: #3f3f46;
+  --border-light: var(--border-highlight);
+  
   --shadow: rgba(0, 0, 0, 0.5);
+  --shadow-sm: rgba(0, 0, 0, 0.3);
+  --shadow-rgb: 0, 0, 0;
 
-  /* Mapping old variables to new ones for compatibility */
+  /* Aliases de compatibilidade */
   --bg-primary: var(--bg-base);
   --bg-secondary: var(--bg-surface);
-  --radius: var(--radius-sm);
-  --success-dim: rgba(52, 211, 153, 0.2);
-  --danger-dim: rgba(239, 68, 68, 0.2);
-  --warning-dim: rgba(251, 191, 36, 0.2);
+}
+
+/* 
+  LIGHT THEME 
+*/
+[data-theme="light"] {
+  --bg-base: #f7f7f8;
+  --bg-base-rgb: 247, 247, 248;
+  --bg-surface: #ffffff;
+  --bg-surface-rgb: 255, 255, 255;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f1f3f5;
+  --bg-input: #eef1f4;
+  
+  --text-primary: #111827;
+  --text-primary-rgb: 17, 24, 39;
+  --text-secondary: #374151;
+  --text-muted: #6b7280;
+  
+  --border: #d1d5db;
+  --border-highlight: #c4cad3;
   --border-light: var(--border-highlight);
-  --shadow-sm: rgba(0, 0, 0, 0.3);
+  
+  --shadow: rgba(15, 23, 42, 0.08);
+  --shadow-sm: rgba(15, 23, 42, 0.05);
+  --shadow-rgb: 15, 23, 42;
+
+  /* Aliases de compatibilidade */
+  --bg-primary: var(--bg-base);
+  --bg-secondary: var(--bg-surface);
 }
