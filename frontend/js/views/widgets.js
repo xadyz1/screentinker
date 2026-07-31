@@ -6,7 +6,7 @@ const API = (url, opts = {}) => fetch('/api' + url, { headers: { 'Content-Type':
 
 // Widget type ids only — name + desc are looked up via t() so they switch
 // language with the rest of the UI.
-const WIDGET_TYPES = ['clock', 'weather', 'rss', 'text', 'webpage', 'social', 'directory-board', 'directory-search', 'transition', 'crypto', 'world-clock', 'rollover-text', 'daily-menu', 'property-slide'];
+const WIDGET_TYPES = ['clock', 'weather', 'rss', 'text', 'webpage', 'social', 'directory-board', 'directory-search', 'transition', 'crypto', 'world-clock', 'rollover-text', 'daily-menu', 'property-slide', 'modern-clock', 'ticket-queue', 'bi-dashboard'];
 const WIDGET_ICONS = {
   'clock': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>',
   'weather': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>',
@@ -21,10 +21,13 @@ const WIDGET_ICONS = {
   'world-clock': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>',
   'rollover-text': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h16"></path><polyline points="15 3 20 6 15 9"></polyline></svg>',
   'daily-menu': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18M7 8h10M7 12h10M7 16h10"></path></svg>',
-  'property-slide': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>'
+  'property-slide': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>',
+  'modern-clock': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>',
+  'ticket-queue': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path></svg>',
+  'bi-dashboard': '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>'
 };
-const widgetTypeName = (id) => { const n = t(`widget.type.${id.replace(/-/g, '_')}.name`); return n && !n.includes('widget.type') ? n : (id === 'crypto' ? 'Live Crypto' : (id === 'world-clock' ? 'World Clock' : (id === 'rollover-text' ? 'Rollover Text' : (id === 'daily-menu' ? 'Daily Menu' : (id === 'property-slide' ? 'Property Slide' : id))))); };
-const widgetTypeDesc = (id) => { const n = t(`widget.type.${id.replace(/-/g, '_')}.desc`); return n && !n.includes('widget.type') ? n : (id === 'crypto' ? 'Live cryptocurrency ticker' : (id === 'world-clock' ? 'Minimal multi-timezone clock' : '')); };
+const widgetTypeName = (id) => { const n = t(`widget.type.${id.replace(/-/g, '_')}.name`); return n && !n.includes('widget.type') ? n : (id === 'crypto' ? 'Live Crypto' : (id === 'world-clock' ? 'World Clock' : (id === 'rollover-text' ? 'Rollover Text' : (id === 'daily-menu' ? 'Daily Menu' : (id === 'property-slide' ? 'Property Slide' : (id === 'modern-clock' ? 'Modern Clock' : (id === 'ticket-queue' ? 'Ticket Queue' : (id === 'bi-dashboard' ? 'BI Dashboard' : id)))))))); };
+const widgetTypeDesc = (id) => { const n = t(`widget.type.${id.replace(/-/g, '_')}.desc`); return n && !n.includes('widget.type') ? n : (id === 'crypto' ? 'Live cryptocurrency ticker' : (id === 'world-clock' ? 'Minimal multi-timezone clock' : (id === 'ticket-queue' ? 'Queue management system' : ''))); };
 
 function escAttr(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -443,8 +446,28 @@ export async function render(container) {
         break;
       case 'social':
         html += `
-          <div class="form-group"><label>${t('widget.field.platform')}</label><select id="wPlatform" class="input" style="background:var(--bg-input)"><option value="twitter">${t('widget.field.platform_twitter')}</option><option value="instagram">${t('widget.field.platform_instagram')}</option></select></div>
-          <div class="form-group"><label>${t('widget.field.query')}</label><input type="text" id="wQuery" class="input" value="${config.query || ''}" placeholder="${t('widget.field.query_placeholder')}"></div>`;
+          <div class="form-group" style="display:flex;gap:12px;flex-wrap:wrap">
+            <div style="flex:1;min-width:140px"><label>${t('widget.field.platform')}</label>
+              <select id="wPlatform" class="input" style="background:var(--bg-input)">
+                <option value="twitter" ${config.platform === 'twitter' ? 'selected' : ''}>Twitter / X</option>
+                <option value="instagram" ${config.platform === 'instagram' ? 'selected' : ''}>Instagram</option>
+                <option value="bluesky" ${config.platform === 'bluesky' ? 'selected' : ''}>Bluesky</option>
+                <option value="mastodon" ${config.platform === 'mastodon' ? 'selected' : ''}>Mastodon</option>
+                <option value="custom" ${config.platform === 'custom' ? 'selected' : ''}>Custom API</option>
+              </select>
+            </div>
+            <div style="flex:1;min-width:140px"><label>${t('widget.field.query')}</label><input type="text" id="wQuery" class="input" value="${escAttr(config.query)}" placeholder="${t('widget.field.query_placeholder')} (e.g. #news)"></div>
+          </div>
+          <div class="form-group" style="display:flex;gap:12px;flex-wrap:wrap">
+            <div style="flex:2;min-width:180px"><label>API URL (Optional)</label><input type="url" id="wApiUrl" class="input" value="${escAttr(config.api_url)}" placeholder="https://api.example.com/feed"></div>
+            <div style="flex:1;min-width:100px"><label>Refresh (s)</label><input type="number" id="wApiRefresh" class="input" value="${config.refresh_interval || 60}" min="1"></div>
+          </div>
+          <div class="form-group">
+            <label>API Key / Token (Optional)</label><input type="password" id="wApiKey" class="input" value="${escAttr(config.api_key)}" placeholder="Bearer token or API Key">
+          </div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:8px">
+            Nota: Feeds privados ou customizados precisam de um endpoint próprio. O widget mostrará os dados obtidos no ecrã.
+          </div>`;
         break;
       case 'directory-board':
         html += `
@@ -1287,7 +1310,13 @@ export async function render(container) {
       case 'rss': Object.assign(config, { feed_url: val('wFeedUrl'), scroll_speed: parseInt(val('wScrollSpeed')) || 30, max_items: parseInt(val('wMaxItems')) || 10, font_size: parseInt(val('wFontSize')) || 24, color: val('wColor'), background: val('wBg') }); break;
       case 'text': Object.assign(config, { html: val('wHtml'), css: val('wCss'), background: val('wBg') }); break;
       case 'webpage': Object.assign(config, { url: val('wUrl'), zoom: parseInt(val('wZoom')) || 100, refresh_interval: parseInt(val('wRefresh')) || 0 }); break;
-      case 'social': Object.assign(config, { platform: val('wPlatform'), query: val('wQuery') }); break;
+      case 'social': Object.assign(config, { 
+        platform: val('wPlatform'), 
+        query: val('wQuery'),
+        api_url: val('wApiUrl'),
+        api_key: val('wApiKey'),
+        refresh_interval: parseInt(val('wApiRefresh'), 10) || 60
+      }); break;
       case 'transition': {
         const shaders = Array.from(document.querySelectorAll('#wTransList input[type=checkbox]:checked')).map(c => c.dataset.id);
         const params = {}; // per-shader tuned values held in transState.params

@@ -748,14 +748,94 @@ ${c.refresh_interval > 0 ? `<script>setInterval(()=>document.querySelector('ifra
 }
 
 function renderSocial(c) {
+  const platform = c.platform || 'twitter';
+  const query = c.query || '';
+  const apiUrl = c.api_url || '';
+  const apiKey = c.api_key || '';
+  const refreshInterval = parseInt(c.refresh_interval) || 60;
+
   return `<!DOCTYPE html><html><head><style>
-  body { background:${safeCss(c.background, '#000')}; color:${safeCss(c.color, '#FFF')}; font-family:-apple-system,sans-serif; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; }
-</style></head><body>
-<div style="text-align:center">
-  <p style="font-size:24px">Social Feed</p>
-  <p style="opacity:0.5;margin-top:8px">${escapeHtml(c.platform) || 'twitter'}: ${escapeHtml(c.query) || ''}</p>
-  <p style="opacity:0.3;margin-top:16px;font-size:13px">Configure API key in widget settings</p>
-</div></body></html>`;
+  body { background:${safeCss(c.background, '#000')}; color:${safeCss(c.color, '#FFF')}; font-family:-apple-system,sans-serif; margin:0; padding:40px; box-sizing:border-box; display:flex; flex-direction:column; justify-content:center; min-height:100vh; overflow:hidden; }
+  .header { display:flex; align-items:center; gap:16px; margin-bottom:24px; }
+  .header-icon { font-size: 24px; color: ${safeCss(c.color, '#FFF')}; opacity: 0.8; }
+  .header-title { font-size: 28px; font-weight: bold; opacity: 0.9; }
+  .feed { display:flex; flex-direction:column; gap:20px; }
+  .post { background: rgba(255,255,255,0.05); padding: 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); }
+  .post-author { font-weight: bold; margin-bottom: 8px; opacity: 0.9; }
+  .post-text { line-height: 1.4; opacity: 0.8; }
+  .empty-state { text-align: center; opacity: 0.4; display:flex; flex-direction:column; align-items:center; justify-content:center; flex:1; gap: 16px; }
+</style>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head><body>
+
+<div id="app">
+  <div class="empty-state">
+    <i class="fa-solid fa-satellite-dish" style="font-size: 48px;"></i>
+    <div>Social Feed: ${escapeHtml(platform)} ${escapeHtml(query)}</div>
+    <div style="font-size: 13px; margin-top:8px;">A carregar dados...</div>
+  </div>
+</div>
+
+<script>
+  const apiUrl = \`${escapeHtml(apiUrl)}\`;
+  const apiKey = \`${escapeHtml(apiKey)}\`;
+  
+  function getIcon(platform) {
+    if (platform === 'twitter') return '<i class="fa-brands fa-twitter"></i>';
+    if (platform === 'instagram') return '<i class="fa-brands fa-instagram"></i>';
+    if (platform === 'mastodon') return '<i class="fa-brands fa-mastodon"></i>';
+    return '<i class="fa-solid fa-hashtag"></i>';
+  }
+
+  function renderEmpty() {
+    document.getElementById('app').innerHTML = \`
+      <div class="empty-state">
+        <i class="fa-solid fa-satellite-dish" style="font-size: 48px;"></i>
+        <div>Social Feed: ${escapeHtml(platform)} ${escapeHtml(query)}</div>
+        \${apiUrl ? '<div style="font-size: 13px; margin-top:8px;">Nenhum dado disponível.</div>' : '<div style="font-size: 13px; margin-top:8px;">Configure a API URL.</div>'}
+      </div>
+    \`;
+  }
+
+  async function loadFeed() {
+    if (!apiUrl) {
+      renderEmpty();
+      return;
+    }
+    try {
+      const headers = {};
+      if (apiKey) headers['Authorization'] = apiKey.startsWith('Bearer ') ? apiKey : 'Bearer ' + apiKey;
+      
+      const res = await fetch(apiUrl, { headers });
+      if (!res.ok) throw new Error('API Error');
+      const data = await res.json();
+      const items = Array.isArray(data) ? data : (data.items || data.posts || []);
+      
+      if (!items.length) {
+        renderEmpty();
+        return;
+      }
+      
+      let html = \`<div class="header">\${getIcon('${escapeHtml(platform)}')}<div class="header-title">${escapeHtml(query)}</div></div><div class="feed">\`;
+      items.slice(0, 4).forEach(item => {
+        html += \`<div class="post">
+          <div class="post-author">\${item.author || item.username || 'Utilizador'}</div>
+          <div class="post-text">\${item.text || item.content || ''}</div>
+        </div>\`;
+      });
+      html += '</div>';
+      document.getElementById('app').innerHTML = html;
+      
+    } catch (err) {
+      console.warn('Social Feed fetch failed:', err);
+      renderEmpty();
+    }
+  }
+
+  loadFeed();
+  setInterval(loadFeed, ${refreshInterval * 1000});
+</script>
+</body></html>`;
 }
 
 // Directory Board — lobby tenant directory with scrolling content, header/footer,

@@ -433,7 +433,25 @@ async function loadSystem() {
         <a href="/api/status" target="_blank" class="btn btn-secondary btn-sm" style="text-decoration:none">${t('admin.server_status')}</a>
       </div>
       <div id="updateResult" style="margin-top:12px"></div>
+      
+      <div style="margin-top:24px;border:1px solid var(--border);border-radius:8px;background:var(--bg-panel);overflow:hidden">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+          <div style="font-size:13px;font-weight:600;color:var(--text-muted)">${t('admin.manual_update', 'Manual Update Command')}</div>
+          <button class="btn btn-secondary btn-sm" id="copyCmdBtn" style="padding:4px 10px;font-size:12px">Copy Command</button>
+        </div>
+        <pre style="margin:0;padding:16px;background:#090d14;color:#2fe38a;font-size:13px;overflow-x:auto;white-space:pre-wrap;" id="manualUpdateCmd">docker pull ghcr.io/ivandroalves/screentinker:latest && docker compose up -d</pre>
+      </div>
     `;
+
+    document.getElementById('copyCmdBtn')?.addEventListener('click', () => {
+      const cmd = document.getElementById('manualUpdateCmd').innerText;
+      navigator.clipboard.writeText(cmd).then(() => {
+        const btn = document.getElementById('copyCmdBtn');
+        const oldText = btn.textContent;
+        btn.textContent = t('admin.copied', 'Copied!');
+        setTimeout(() => btn.textContent = oldText, 2000);
+      });
+    });
 
     // Check Now button
     document.getElementById('checkUpdateBtn')?.addEventListener('click', async () => {
@@ -449,13 +467,12 @@ async function loadSystem() {
         }
         loadSystem(); // refresh the whole card
       } catch (err) {
-        showToast(err.message, 'error');
-        btn.disabled = false;
-        btn.textContent = t('admin.check_now') || 'Check Now';
+        btn.textContent = 'Error';
+        setTimeout(() => { btn.disabled = false; btn.textContent = t('admin.check_now') || 'Check Now'; }, 3000);
       }
     });
 
-    // Update Now button
+    // Trigger Update Now button
     document.getElementById('triggerUpdateBtn')?.addEventListener('click', async () => {
       const btn = document.getElementById('triggerUpdateBtn');
       const resultEl = document.getElementById('updateResult');
