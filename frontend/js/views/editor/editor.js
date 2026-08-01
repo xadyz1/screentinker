@@ -3,14 +3,14 @@ import { renderSidebar } from './sidebar.js';
 import { renderCanvasDocument, initMoveable, getMoveable, selectElementInCanvas, deselectElementInCanvas, destroyMoveable } from './canvas.js';
 import { renderInspector } from './inspector.js';
 import { createPreset } from './model.js';
-import { request as api } from '../../api.js';
+import { request as api, api as apiClient } from '../../api.js';
 import { showToast } from '../../components/toast.js';
 
 let currentTemplate = null;
 let selectedElementId = null;
 let scale = 1;
 
-function updateElement(updates) {
+function updateElementFromInspector(updates) {
   if (updates === 'DELETE_ACTION') {
     currentTemplate.document.elements = currentTemplate.document.elements.filter(e => e.id !== selectedElementId);
     selectedElementId = null;
@@ -21,7 +21,19 @@ function updateElement(updates) {
   const el = currentTemplate.document.elements.find(e => e.id === selectedElementId);
   if (el) {
     Object.assign(el, updates);
-    reRender(true); // true means keep selection
+    reRender(true); // Re-render canvas to apply style changes
+  }
+}
+
+function updateElementFromMoveable(id, updates) {
+  const el = currentTemplate.document.elements.find(e => e.id === id);
+  if (el) {
+    Object.assign(el, updates);
+    // Do NOT reRender canvas here. Moveable handles inline DOM updates.
+    // If the inspector is open for this element, re-render just the inspector
+    if (selectedElementId === id) {
+      renderInspector(el, 'inspectorContent', updateElementFromInspector);
+    }
   }
 }
 
@@ -29,7 +41,7 @@ function handleSelect(id, node) {
   selectedElementId = id;
   selectElementInCanvas(id, node);
   const el = currentTemplate.document.elements.find(e => e.id === id);
-  renderInspector(el, 'inspectorContent', updateElement);
+  renderInspector(el, 'inspectorContent', updateElementFromInspector);
 }
 
 function reRender(keepSelection = false) {
@@ -46,7 +58,7 @@ function reRender(keepSelection = false) {
   } else {
     selectedElementId = null;
     deselectElementInCanvas();
-    renderInspector(null, 'inspectorContent', updateElement);
+    renderInspector(null, 'inspectorContent', updateElementFromInspector);
   }
 }
 
@@ -111,6 +123,7 @@ export function initEditor(container, templateData) {
           <span style="background:#334155; padding:2px 8px; border-radius:4px; font-size:12px; font-family:monospace;">${currentTemplate.orientation}</span>
         </div>
         <div style="display: flex; align-items: center; gap: 12px;">
+          <button class="btn btn-outline" id="publishTemplateBtn" style="border-color: #475569; color: white;">Publish to Content</button>
           <button class="btn btn-outline" id="saveTemplateBtn" style="border-color: #475569; color: white; background: #f97316;">Save Changes</button>
         </div>
       </div>
@@ -174,14 +187,14 @@ export function initEditor(container, templateData) {
 
   // Initialize Canvas content and Moveable
   renderCanvasDocument(currentTemplate.document, canvasEl);
-  initMoveable(canvasEl, updateElement, handleSelect);
+  initMoveable(canvasEl, updateElementFromMoveable, handleSelect);
 
   // Deselect on clicking empty canvas
   canvasEl.addEventListener('mousedown', (e) => {
     if (e.target === canvasEl) {
       selectedElementId = null;
       deselectElementInCanvas();
-      renderInspector(null, 'inspectorContent', updateElement);
+      renderInspector(null, 'inspectorContent', updateElementFromInspector);
     }
   });
 
@@ -226,6 +239,49 @@ export function initEditor(container, templateData) {
       showToast('Template saved successfully!');
     } catch (err) {
       showToast(err.message, 'error');
+    }
+  };
+
+  // Publish handler
+  document.getElementById('publishTemplateBtn').onclick = async () => {
+    if (typeof html2canvas === 'undefined') {
+      showToast('html2canvas library not loaded', 'error');
+      return;
+    }
+    const btn = document.getElementById('publishTemplateBtn');
+    const originalText = btn.textContent;
+    
+    try {
+      btn.textContent = 'Publishing...';
+      btn.disabled = true;
+
+      // Deselect UI overlays
+      selectedElementId = null;
+      deselectElementInCanvas();
+      renderInspector(null, 'inspectorContent', updateElementFromInspector);
+      
+      // Give DOM time to update visually
+      await new Promise(r => setTimeout(r, 100));
+
+      const canvasEl = document.getElementById('editorCanvas');
+      const canvas = await html2canvas(canvasEl, { useCORS: true, scale: 1 });
+      
+      canvas.toBlob(async (blob) => {
+        try {
+          const file = new File([blob], `${currentTemplate.name || 'Template'}.png`, { type: 'image/png' });
+          await apiClient.uploadContent(file, () => {});
+          showToast('Template published to content library!');
+        } catch (err) {
+          showToast(err.message, 'error');
+        } finally {
+          btn.textContent = originalText;
+          btn.disabled = false;
+        }
+      }, 'image/png');
+    } catch (err) {
+      showToast(err.message, 'error');
+      btn.textContent = originalText;
+      btn.disabled = false;
     }
   };
 }

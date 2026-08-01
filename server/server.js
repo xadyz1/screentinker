@@ -95,9 +95,9 @@ const dashboardCsp = helmet.contentSecurityPolicy({
     // Cloudflare Web Analytics: the beacon SCRIPT (static.cloudflareinsights.com) must be allowed to
     // load, AND the beacon must be allowed to POST its data back (connect-src -> cloudflareinsights.com).
     // Both are required — with only the script entry the beacon loads but silently can't report.
-    scriptSrc: ["'self'", 'https://static.cloudflareinsights.com'],
+    scriptSrc: ["'self'", "'unsafe-inline'", 'https://static.cloudflareinsights.com', 'https://cdnjs.cloudflare.com'],
     scriptSrcAttr: ["'unsafe-inline'"],
-    styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+    styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", 'https://cdnjs.cloudflare.com'],
     styleSrcAttr: ["'unsafe-inline'"],
     imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
     mediaSrc: ["'self'", 'blob:', 'https:'],
