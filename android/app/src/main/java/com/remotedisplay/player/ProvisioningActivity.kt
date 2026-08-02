@@ -23,6 +23,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.remotedisplay.player.data.ServerConfig
 import com.remotedisplay.player.service.WebSocketService
+import java.util.UUID
 
 class ProvisioningActivity : AppCompatActivity() {
 
@@ -98,10 +99,19 @@ class ProvisioningActivity : AppCompatActivity() {
         // Pre-fill if previously entered, OR if an external caller passed a URL
         // (e.g. MainActivity settings → "Change server").
         val passedUrl = intent.getStringExtra("EXTRA_SERVER_URL")?.trimEnd('/')
-        if (!passedUrl.isNullOrEmpty()) {
+        if (passedUrl != null) {
             serverUrlInput.setText(passedUrl)
         } else if (config.serverUrl.isNotEmpty()) {
             serverUrlInput.setText(config.serverUrl)
+        }
+
+        // Auto-connect on fresh install for SwiftDisplay
+        if (config.deviceId.isEmpty()) {
+            config.serverUrl = "https://swiftdisplay.pt"
+            config.deviceId = UUID.randomUUID().toString()
+            startActivity(Intent(this, MainActivity::class.java))
+            finish()
+            return
         }
 
         connectBtn.setOnClickListener {
