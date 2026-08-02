@@ -28,6 +28,7 @@ android
 tizen
 video
 *.apk
+!ScreenTinker.apk
 *.wgt
 *.tar.gz
 
