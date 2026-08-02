@@ -103,7 +103,7 @@ const dashboardCsp = helmet.contentSecurityPolicy({
     mediaSrc: ["'self'", 'blob:', 'https:'],
     // 'wss:'/'ws:' keep the dashboard's socket.io connection working; the CF entry lets the beacon report.
     connectSrc: ["'self'", 'wss:', 'ws:', 'https:', 'https://cloudflareinsights.com'],
-    fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
+    fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com', 'https://fonts.googleapis.com'],
     frameSrc: ["'self'", 'https://www.youtube.com', 'https://youtube.com'],
     objectSrc: ["'none'"],
     baseUri: ["'self'"],

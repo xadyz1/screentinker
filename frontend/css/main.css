@@ -6,6 +6,10 @@ body {
   font-weight: 400;
 }
 
+main#app {
+  overflow-y: auto !important;
+}
+
 h1,
 h2,
 h3,
@@ -2154,6 +2158,7 @@ body {
 .drag-preset:hover svg {
   stroke: var(--editor-primary);
 }
+
 /* Login page wrapper */
 .login-wrapper {
   display: flex;

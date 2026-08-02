@@ -34,7 +34,7 @@ export async function render(container) {
         const time = new Date(item.created_at * 1000);
         const timeStr = time.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' +
                         time.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-        const icon = getActionIcon(item.action);
+        const icon = getActionIcon(item.action || item.ACTION);
 
         return `
           <div style="display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);align-items:flex-start">
@@ -42,7 +42,7 @@ export async function render(container) {
             <div style="flex:1;min-width:0">
               <div style="font-size:13px">
                 <strong>${esc(item.user_name || item.user_email || t('activity.system'))}</strong>
-                <span style="color:var(--text-secondary)"> ${esc(formatAction(item.action))}</span>
+                <span style="color:var(--text-secondary)"> ${esc(formatAction(item.action || item.ACTION))}</span>
               </div>
               ${item.details ? `<div style="font-size:12px;color:var(--text-muted);margin-top:2px">${esc(item.details)}</div>` : ''}
             </div>
@@ -96,6 +96,7 @@ function getActionIcon(action) {
 // languages with the rest of the UI. The mapping below preserves the original
 // verb-then-noun structure of the English version.
 function formatAction(action) {
+  if (!action || typeof action !== 'string') return String(action || 'Unknown');
   // Verbs
   let s = action
     .replace('POST /api/', t('activity.verb_created') + ' ')

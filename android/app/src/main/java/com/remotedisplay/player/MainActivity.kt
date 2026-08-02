@@ -1140,7 +1140,7 @@ class MainActivity : AppCompatActivity() {
         val input = EditText(this).apply {
             setText(currentUrl)
             inputType = android.text.InputType.TYPE_TEXT_VARIATION_URI
-            hint = "https://screentinker.com"
+            hint = "https://swiftdisplay.com"
             setSingleLine()
         }
         val container = FrameLayout(this).apply {

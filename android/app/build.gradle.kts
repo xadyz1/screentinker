@@ -31,7 +31,7 @@ android {
 
     buildTypes {
         debug {
-            signingConfig = signingConfigs.getByName("release")
+            // Use default debug keystore
         }
         release {
             isMinifyEnabled = false
