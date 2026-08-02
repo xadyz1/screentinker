@@ -27,6 +27,9 @@ export default {
   'nav.settings': 'Settings',
   'nav.subscription': 'Subscription',
   'nav.admin': 'Admin',
+  'admin.latest_version': 'Latest Version',
+  'admin.status': 'Status',
+  'admin.update_available': 'Update Available',
 
   // Common (shared across views)
   'common.save': 'Save',

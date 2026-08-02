@@ -26,6 +26,9 @@ export default {
   'nav.settings': 'Configurações',
   'nav.subscription': 'Assinatura',
   'nav.admin': 'Admin',
+  'admin.latest_version': 'Última Versão',
+  'admin.status': 'Estado',
+  'admin.update_available': 'Atualização Disponível',
 
   // Common
   'common.save': 'Salvar',
