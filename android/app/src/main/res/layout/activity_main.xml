@@ -45,21 +45,13 @@
         android:visibility="visible">
 
         <ImageView
-            android:layout_width="80dp"
+            android:layout_width="240dp"
             android:layout_height="80dp"
-            android:src="@android:drawable/ic_media_play"
+            android:src="@drawable/logowhiteswift"
+            android:scaleType="fitCenter"
             android:layout_marginBottom="16dp"
-            android:alpha="0.3"
-            android:contentDescription="Logo" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="RemoteDisplay"
-            android:textColor="#e65c00"
-            android:textSize="28sp"
-            android:textStyle="bold"
-            android:layout_marginBottom="8dp" />
+            android:alpha="0.9"
+            android:contentDescription="SwiftDisplay Logo" />
 
         <TextView
             android:id="@+id/statusText"

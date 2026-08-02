@@ -23,8 +23,9 @@
     <application
         android:name=".RemoteDisplayApp"
         android:allowBackup="false"
-        android:icon="@android:drawable/ic_media_play"
-        android:label="RemoteDisplay"
+        android:icon="@drawable/ic_launcher"
+        android:banner="@drawable/tv_banner"
+        android:label="SwiftDisplay"
         android:largeHeap="true"
         android:theme="@style/Theme.RemoteDisplay"
         android:usesCleartextTraffic="true"
