@@ -11,7 +11,11 @@ const config = require('../config');
 // A copy under DATA_DIR wins (container operators mount /data/ScreenTinker.apk),
 // else the legacy in-repo root path — same order as the old resolveApkPath().
 function candidates() {
-  return [path.join(config.dataDir, 'ScreenTinker.apk'), path.join(__dirname, '..', '..', 'ScreenTinker.apk')];
+  return [
+    path.join(config.dataDir, 'ScreenTinker.apk'), 
+    path.join(__dirname, '..', '..', 'android', 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk'),
+    path.join(__dirname, '..', '..', 'ScreenTinker.apk')
+  ];
 }
 
 let cache = { path: null, exists: false, size: 0, mtime: 0 };

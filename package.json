@@ -8,7 +8,8 @@
     "build": "npm install --prefix server && node scripts/fix-htaccess.js",
     "postinstall": "node scripts/fix-htaccess.js",
     "build:manifest": "node shared/Transitions/generate-manifest.js",
-    "test:shaders": "node shared/Transitions/compile-test.js"
+    "test:shaders": "node shared/Transitions/compile-test.js",
+    "deploy-apk": "cp android/app/build/outputs/apk/debug/app-debug.apk ScreenTinker.apk && git add ScreenTinker.apk && git commit -m 'Release novo APK' && git push"
   },
   "devDependencies": {
     "puppeteer-core": "^23.11.1"
