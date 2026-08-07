@@ -447,7 +447,7 @@ function renderItems(items) {
         <div style="font-size:14px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(item.filename || item.widget_name || t('common.unknown'))}</div>
         <div style="font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:8px;min-width:0">
           <span style="white-space:nowrap">${item.widget_id ? t('playlist.item_widget') : esc(item.mime_type || t('playlist.unknown_type'))}</span>
-          ${item.schedules && item.schedules.length ? `<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:#0c2a3f;color:#7dd3fc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(scheduleSummary(item.schedules))}">🕐 ${esc(scheduleSummary(item.schedules))}</span>` : ''}
+          ${item.schedules && item.schedules.length ? `<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:#0c2a3f;color:#7dd3fc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(scheduleSummary(item.schedules))}"> ${esc(scheduleSummary(item.schedules))}</span>` : ''}
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
@@ -901,7 +901,7 @@ function showScheduleModal(item) {
       <div style="border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
           <strong style="font-size:13px">${t('itemsched.block', { n: idx + 1 })}</strong>
-          <button class="sched-remove" data-idx="${idx}" title="${t('itemsched.remove_block')}" style="color:var(--text-muted);background:none;border:none;cursor:pointer;font-size:14px">✕</button>
+          <button class="sched-remove" data-idx="${idx}" title="${t('itemsched.remove_block')}" style="color:var(--text-muted);background:none;border:none;cursor:pointer;font-size:14px"></button>
         </div>
         <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px">
           ${dayLabels.map((lbl, d) => `<button class="sched-day" data-idx="${idx}" data-day="${d}" style="padding:4px 9px;border-radius:6px;font-size:12px;cursor:pointer;border:1px solid var(--border);background:${b.days.includes(d) ? 'var(--accent)' : 'var(--bg-input)'};color:${b.days.includes(d) ? '#000' : 'var(--text-muted)'}">${lbl}</button>`).join('')}

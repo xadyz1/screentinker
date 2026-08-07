@@ -801,7 +801,7 @@ export default {
   'itemsched.err.end_date': 'La fecha de fin debe ser AAAA-MM-DD',
   'device.clock.label': 'Reloj del dispositivo',
   'device.clock.reported': '{time} reportado',
-  'device.clock.skew': '⚠ reloj desfasado en {amount} — las programaciones pueden activarse a la hora local incorrecta',
+  'device.clock.skew': ' reloj desfasado en {amount} — las programaciones pueden activarse a la hora local incorrecta',
 
   // Onboarding
   'onboarding.back': 'Atrás',

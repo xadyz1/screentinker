@@ -1115,7 +1115,7 @@ export async function render(container) {
           ${(sec.items||[]).map((item, j) => `
             <div style="display:flex;gap:8px;margin-bottom:8px;align-items:flex-start">
               <img ${item.image_url ? `src="${escAttr(item.image_url)}"` : ''} style="width:36px;height:36px;object-fit:cover;border-radius:4px;background:var(--bg-input);display:${item.image_url ? 'block' : 'none'}">
-              <button type="button" class="btn btn-secondary btn-sm mn-item-img-btn" data-s="${i}" data-i="${j}" style="padding:0 6px;height:36px" title="Adicionar Foto">📷</button>
+              <button type="button" class="btn btn-secondary btn-sm mn-item-img-btn" data-s="${i}" data-i="${j}" style="padding:0 6px;height:36px" title="Adicionar Foto"></button>
               <div style="flex:1">
                 <input type="text" class="input mn-item-name" data-s="${i}" data-i="${j}" value="${escAttr(item.name)}" placeholder="Item name" style="margin-bottom:4px;font-size:12px">
                 <input type="text" class="input mn-item-desc" data-s="${i}" data-i="${j}" value="${escAttr(item.description)}" placeholder="Description" style="font-size:11px">

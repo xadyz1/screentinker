@@ -94,7 +94,9 @@ router.post('/register', (req, res) => {
     return res.status(403).json({ error: 'Public registration is disabled. Contact your administrator.' });
   }
   const { email, password, name, createOrg } = req.body;
-  if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+  if (!email || !password || typeof email !== 'string' || typeof password !== 'string') {
+    return res.status(400).json({ error: 'Email and password must be valid strings' });
+  }
   if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
 
   const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase());
@@ -139,7 +141,9 @@ router.post('/register', (req, res) => {
 // Login
 router.post('/login', (req, res) => {
   const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+  if (!email || !password || typeof email !== 'string' || typeof password !== 'string') {
+    return res.status(400).json({ error: 'Email and password must be valid strings' });
+  }
 
   const user = db.prepare('SELECT * FROM users WHERE email = ? AND auth_provider = ?').get(email.toLowerCase(), 'local');
   if (!user) {

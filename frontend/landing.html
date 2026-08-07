@@ -78,7 +78,7 @@
     .price span { font-size: 1rem; color: #6b7280; }
     .features-list { list-style: none; margin: 1.5rem 0; flex: 1; }
     .features-list li { margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; }
-    .features-list li::before { content: '✓'; color: #10b981; font-weight: bold; }
+    .features-list li::before { content: ''; color: #10b981; font-weight: bold; }
     
     .cta-banner { background: var(--card-bg); border: 1px solid var(--border); border-radius: 1rem; padding: 3rem; max-width: 1000px; margin: 0 auto 4rem; text-align: left; display: flex; align-items: center; justify-content: space-between; }
     .cta-banner h2 { font-size: 2rem; margin-bottom: 1rem; }
@@ -89,7 +89,12 @@
     
     .lang-selector { background: transparent; border: 1px solid var(--border); color: var(--text); padding: 0.25rem; border-radius: 4px; cursor: pointer; }
     .theme-toggle { background: transparent; border: none; color: var(--text); cursor: pointer; font-size: 1.25rem; }
+    body { font-family: 'Michroma', sans-serif; font-weight: 400; }
+  h1, h2, h3, h4, h5, h6, .brand { font-family: 'Goldman', sans-serif; font-weight: 700; }
+  .feature-icon { font-size: 32px; color: var(--accent); margin-bottom: 16px; }
+  .platform-item .icon { font-size: 32px; color: var(--accent); margin-bottom: 8px; }
   </style>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
   <nav>
@@ -109,7 +114,7 @@
           <option value="en">EN</option>
           <option value="pt">PT</option>
         </select>
-        <button id="theme-toggle" class="theme-toggle">🌓</button>
+        <button id="theme-toggle" class="theme-toggle"><i class="fa-solid fa-moon"></i></button>
         <a href="/login.html" class="btn btn-login" data-i18n="landing.nav.login">Login</a>
       </div>
     </div>
@@ -121,11 +126,7 @@
     <a href="/login.html?signup=1" class="btn btn-primary" data-i18n="landing.hero.cta" style="margin-bottom: 2rem;">Start Your Free Trial</a>
   </div>
 
-  <div style="text-align:center; padding: 0 2rem;">
-    <div style="max-width: 800px; margin: 0 auto 4rem; background: var(--card-bg); border-radius: 12px; border: 1px solid var(--border); padding: 1rem; aspect-ratio: 16/9; display: flex; align-items:center; justify-content:center;">
-       <img src="/assets/swiftdisplaylogo.png" alt="TV Mockup" style="max-height: 50%;">
-    </div>
-  </div>
+  <div class="relative mx-auto max-w-5xl" style="padding: 0 2rem; margin-bottom: 4rem;"><div class="block md:hidden"><img src="/_assets/v11/5937e7661878c5933316d555f5b35b752d0ab50e.png" alt="Digital Signage Interface" class="w-full rounded-xl shadow-lg" style="max-width: 100%;"></div><div class="hidden md:block relative w-full" style="width: 90%; margin: 0px auto; aspect-ratio: 16 / 9; background: linear-gradient(145deg, rgb(42, 42, 42), rgb(26, 26, 26)); border-radius: 12px; padding: 12px; box-shadow: rgba(0, 0, 0, 0.5) 0px 20px 60px, rgba(255, 255, 255, 0.1) 0px 0px 0px 2px inset; position: relative;"><div class="relative w-full h-full bg-black rounded-lg overflow-hidden" style="box-shadow: rgba(0, 0, 0, 0.8) 0px 0px 20px inset; position: relative; height: 100%;"><iframe src="https://goldencreative.b-cdn.net/golden/1785853071392_swiftdisplay-golden-creative-signage-final.html" class="w-full h-full border-0" title="Golden Global Display - Live Preview" allow="autoplay" style="display: block; pointer-events: none; width: 100%; height: 100%; border: 0;"></iframe><div class="absolute inset-0 pointer-events-none" style="background: linear-gradient(135deg, transparent 0%, rgba(255, 255, 255, 0.03) 50%, transparent 100%); position: absolute; top: 0; left: 0; right: 0; bottom: 0;"></div></div><div class="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-full" style="width: 120px; height: 8px; background: linear-gradient(rgb(42, 42, 42), rgb(26, 26, 26)); border-radius: 0px 0px 8px 8px; margin-top: 4px; position: absolute; left: 50%; bottom: 0; transform: translate(-50%, 100%);"></div><div class="absolute bottom-0 left-1/2 transform -translate-x-1/2" style="width: 60px; height: 20px; background: linear-gradient(rgb(42, 42, 42), rgb(26, 26, 26)); border-radius: 4px; margin-top: -10px; box-shadow: rgba(0, 0, 0, 0.3) 0px 4px 8px; position: absolute; left: 50%; bottom: 0; transform: translateX(-50%);"></div></div></div>
 
   <div class="section-title">
     <h2 data-i18n="landing.industry.title">Tailored for your industry</h2>
@@ -133,17 +134,17 @@
   </div>
   <div class="grid grid-3">
     <div class="card">
-      <div class="card-icon">🏥</div>
+      <div class="card-icon"></div>
       <h3 data-i18n="landing.industry.healthcare">Healthcare</h3>
       <p data-i18n="landing.industry.healthcare_desc">Enhance patient experiences, reduce wait times, and improve clinic flow.</p>
     </div>
     <div class="card">
-      <div class="card-icon">🎓</div>
+      <div class="card-icon"></div>
       <h3 data-i18n="landing.industry.education">Education</h3>
       <p data-i18n="landing.industry.education_desc">Keep students informed with real-time news, schedules, and alerts.</p>
     </div>
     <div class="card">
-      <div class="card-icon">🛍️</div>
+      <div class="card-icon">️</div>
       <h3 data-i18n="landing.industry.retail">Retail & Dining</h3>
       <p data-i18n="landing.industry.retail_desc">Captivate shoppers and diners with vibrant menus and promotions.</p>
     </div>
@@ -155,22 +156,22 @@
   </div>
   <div class="grid grid-4">
     <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem; background: rgba(239, 68, 68, 0.1); color: #ef4444;">🌐</div>
+      <div class="card-icon" style="margin: 0 auto 1rem; background: rgba(239, 68, 68, 0.1); color: #ef4444;"></div>
       <h3 data-i18n="landing.anywhere.browser">Any browser</h3>
       <p data-i18n="landing.anywhere.browser_desc">Chrome, Firefox, Safari, Edge, WebOS.</p>
     </div>
     <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem; background: rgba(245, 158, 11, 0.1); color: #f59e0b;">📱</div>
+      <div class="card-icon" style="margin: 0 auto 1rem; background: rgba(245, 158, 11, 0.1); color: #f59e0b;"></div>
       <h3 data-i18n="landing.anywhere.smartphones">Smartphones</h3>
       <p data-i18n="landing.anywhere.smartphones_desc">iPhone & Android Mobile.</p>
     </div>
     <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem; background: rgba(59, 130, 246, 0.1); color: #3b82f6;">📺</div>
+      <div class="card-icon" style="margin: 0 auto 1rem; background: rgba(59, 130, 246, 0.1); color: #3b82f6;"></div>
       <h3 data-i18n="landing.anywhere.smart_tvs">Smart TVs</h3>
       <p data-i18n="landing.anywhere.smart_tvs_desc">LG WebOS, Samsung Tizen OS, Roku.</p>
     </div>
     <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem; background: rgba(16, 185, 129, 0.1); color: #10b981;">🤖</div>
+      <div class="card-icon" style="margin: 0 auto 1rem; background: rgba(16, 185, 129, 0.1); color: #10b981;"></div>
       <h3 data-i18n="landing.anywhere.android_tvs">Android TVs</h3>
       <p data-i18n="landing.anywhere.android_tvs_desc">Sony, TCL, Hisense.</p>
     </div>
@@ -182,42 +183,42 @@
   </div>
   <div class="grid grid-4" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
     <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem;">🌐</div>
+      <div class="card-icon" style="margin: 0 auto 1rem;"></div>
       <h3 data-i18n="landing.customization.custom_domains" style="font-size:1rem;">Custom Domains</h3>
       <p data-i18n="landing.customization.custom_domains_desc" style="font-size:0.75rem;">Bring your domain for your display URLs.</p>
     </div>
     <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem;">🎨</div>
+      <div class="card-icon" style="margin: 0 auto 1rem;"></div>
       <h3 data-i18n="landing.customization.whitelabel" style="font-size:1rem;">Whitelabel UX</h3>
       <p data-i18n="landing.customization.whitelabel_desc" style="font-size:0.75rem;">Complete whitelabel solutions for agencies.</p>
     </div>
     <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem;">🏢</div>
+      <div class="card-icon" style="margin: 0 auto 1rem;"></div>
       <h3 data-i18n="landing.customization.multi_org" style="font-size:1rem;">Multi-organization</h3>
       <p data-i18n="landing.customization.multi_org_desc" style="font-size:0.75rem;">Manage multiple clients from a single login.</p>
     </div>
     <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem;">🧩</div>
+      <div class="card-icon" style="margin: 0 auto 1rem;"></div>
       <h3 data-i18n="landing.customization.plugins" style="font-size:1rem;">Plugins</h3>
       <p data-i18n="landing.customization.plugins_desc" style="font-size:0.75rem;">Connect integrations and data sources.</p>
     </div>
     <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem;">👥</div>
+      <div class="card-icon" style="margin: 0 auto 1rem;"></div>
       <h3 data-i18n="landing.customization.roles" style="font-size:1rem;">Roles</h3>
       <p data-i18n="landing.customization.roles_desc" style="font-size:0.75rem;">Fine-grained RBAC access control.</p>
     </div>
     <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem;">✨</div>
+      <div class="card-icon" style="margin: 0 auto 1rem;"></div>
       <h3 data-i18n="landing.customization.branding" style="font-size:1rem;">Branding Workspace</h3>
       <p data-i18n="landing.customization.branding_desc" style="font-size:0.75rem;">Custom colors and logos per org.</p>
     </div>
     <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem;">⭐</div>
+      <div class="card-icon" style="margin: 0 auto 1rem;"></div>
       <h3 data-i18n="landing.customization.premium" style="font-size:1rem;">Premium Support</h3>
       <p data-i18n="landing.customization.premium_desc" style="font-size:0.75rem;">Highest priority technical support.</p>
     </div>
     <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem;">📱</div>
+      <div class="card-icon" style="margin: 0 auto 1rem;"></div>
       <h3 data-i18n="landing.customization.custom_apps" style="font-size:1rem;">Custom Apps</h3>
       <p data-i18n="landing.customization.custom_apps_desc" style="font-size:0.75rem;">We build custom integrations just for you.</p>
     </div>
@@ -313,7 +314,7 @@
     </div>
     <div style="margin-top: 1rem;">
       <img src="/assets/swiftdisplaylogo.png" style="height:24px; vertical-align:middle;">
-      <span>© 2026 SwiftDisplay, Inc. All rights reserved.</span>
+      <span> 2026 SwiftDisplay, Inc. All rights reserved.</span>
     </div>
   </footer>
 

@@ -192,7 +192,7 @@ async function renderWallEditor(container, wallId) {
     <div class="page-header" style="margin-bottom:12px">
       <h1 style="display:flex;align-items:center;gap:10px">
         <span id="wallTitleText">${esc(wall.name)}</span>
-        <button class="btn btn-sm" id="renameWallBtn" title="Rename wall" style="padding:2px 8px;font-size:12px">✎</button>
+        <button class="btn btn-sm" id="renameWallBtn" title="Rename wall" style="padding:2px 8px;font-size:12px"></button>
       </h1>
       <div style="display:flex;gap:8px">
         <button class="btn btn-sm" id="centerViewBtn" title="Re-center and fit content to the viewport">Center</button>
@@ -229,7 +229,7 @@ async function renderWallEditor(container, wallId) {
       <div style="width:260px;flex-shrink:0">
         <div id="selectionPanel" class="wall-selection-panel" style="margin-bottom:14px"></div>
         <h3 style="font-size:14px;margin-bottom:6px">${t('wall.available_displays')}</h3>
-        <p style="color:var(--text-muted);font-size:11px;margin:0 0 8px">Drag onto the canvas to add. Use the ✕ on a tile to remove.</p>
+        <p style="color:var(--text-muted);font-size:11px;margin:0 0 8px">Drag onto the canvas to add. Use the  on a tile to remove.</p>
         <div id="availableDevices" style="min-height:60px;padding:6px;border:1px dashed var(--border);border-radius:8px"></div>
         <div class="info-card" style="margin-top:14px;padding:10px;font-size:12px;line-height:1.55">
           <strong style="font-size:12px">How it works</strong>

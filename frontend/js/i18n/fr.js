@@ -798,7 +798,7 @@ export default {
   'itemsched.err.end_date': 'La date de fin doit être AAAA-MM-JJ',
   'device.clock.label': 'Horloge de l’appareil',
   'device.clock.reported': '{time} signalé',
-  'device.clock.skew': '⚠ horloge décalée de {amount} — les programmations peuvent se déclencher à la mauvaise heure locale',
+  'device.clock.skew': ' horloge décalée de {amount} — les programmations peuvent se déclencher à la mauvaise heure locale',
 
   // Onboarding
   'onboarding.back': 'Retour',

@@ -1062,7 +1062,7 @@ export default {
   'itemsched.err.end_date': 'End date must be YYYY-MM-DD',
   'device.clock.label': 'Device clock',
   'device.clock.reported': '{time} reported',
-  'device.clock.skew': '⚠ clock off by {amount} — schedules may fire at the wrong local time',
+  'device.clock.skew': ' clock off by {amount} — schedules may fire at the wrong local time',
 
   // Onboarding
   'onboarding.back': 'Back',

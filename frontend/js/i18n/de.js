@@ -798,7 +798,7 @@ export default {
   'itemsched.err.end_date': 'Enddatum muss JJJJ-MM-TT sein',
   'device.clock.label': 'Geräteuhr',
   'device.clock.reported': '{time} gemeldet',
-  'device.clock.skew': '⚠ Uhr weicht um {amount} ab — Zeitpläne können zur falschen lokalen Zeit auslösen',
+  'device.clock.skew': ' Uhr weicht um {amount} ab — Zeitpläne können zur falschen lokalen Zeit auslösen',
 
   // Onboarding
   'onboarding.back': 'Zurück',

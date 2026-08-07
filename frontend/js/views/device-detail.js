@@ -897,7 +897,7 @@ async function showReAdoptModal(device) {
     btn.addEventListener('click', async () => {
       const s = snapshots[parseInt(btn.dataset.i, 10)];
       let msg = t('device.readopt.confirm', { source: s.device_name || t('device.readopt.unnamed'), target: device.name || '' });
-      if (s.blocked) msg += '\n\n⚠ ' + t('device.readopt.confirm_blocked');   // explicit: target will go dark
+      if (s.blocked) msg += '\n\n ' + t('device.readopt.confirm_blocked');   // explicit: target will go dark
       if (!confirm(msg)) return;
       btn.disabled = true;
       try {
