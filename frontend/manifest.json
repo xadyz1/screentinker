@@ -9,12 +9,12 @@
   "orientation": "any",
   "icons": [
     {
-      "src": "/assets/swiftdisplaylogo.png",
+      "src": "/assets/swiftdisplayappicon.png",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "/assets/swiftdisplaylogo.png",
+      "src": "/assets/swiftdisplayappicon.png",
       "sizes": "512x512",
       "type": "image/png"
     }
