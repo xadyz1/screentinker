@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -17,10 +17,10 @@
       --text: #111827;
       --card-bg: #ffffff;
       --border: #e5e7eb;
-      --primary: #ef4444; /* approximate red/orange */
-      --secondary: #2563eb; /* approximate blue */
+      --primary: #f97316; /* orange */
+      --secondary: #3b82f6; /* blue */
       --nav-bg: rgba(255, 255, 255, 0.9);
-      --gradient-text: linear-gradient(90deg, #3b82f6, #ef4444);
+      --gradient-text: linear-gradient(90deg, #3b82f6, #f97316);
     }
     [data-theme="dark"] {
       --bg: #09090b;
@@ -38,12 +38,12 @@
     .nav-links { display: flex; gap: 2rem; align-items: center; font-weight: 500; font-size: 14px; }
     .nav-actions { display: flex; gap: 1rem; align-items: center; }
     .btn { padding: 0.5rem 1rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer; border: none; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; transition: all 0.2s;}
-    .btn-primary { background: var(--primary); color: white; background: linear-gradient(90deg, #4f46e5, #ef4444); }
+    .btn-primary { background: var(--primary); color: white; background: linear-gradient(90deg, #3b82f6, #f97316); border: none; }
     .btn-secondary { background: var(--card-bg); color: var(--text); border: 1px solid var(--border); }
-    .btn-login { background: #ef4444; color: white; border-radius: 20px; padding: 0.4rem 1.2rem; }
+    .btn-login { background: var(--primary); color: white; border-radius: 20px; padding: 0.4rem 1.2rem; border: none; }
     .hero { text-align: center; padding: 8rem 2rem 4rem; max-width: 800px; margin: 0 auto; }
     .hero h1 { font-size: 3.5rem; margin-bottom: 1rem; line-height: 1.2; }
-    .hero h1 span { background: var(--gradient-text); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .hero h1 span { background: var(--gradient-text); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
     .hero p { color: #6b7280; font-size: 1.125rem; margin-bottom: 2rem; }
     [data-theme="dark"] .hero p { color: #a1a1aa; }
     .tv-mockup { max-width: 800px; margin: 0 auto 4rem; display: block; width: 100%; border-radius: 12px; box-shadow: 0 20px 40px rgba(0,0,0,0.2); }
@@ -78,7 +78,7 @@
     .price span { font-size: 1rem; color: #6b7280; }
     .features-list { list-style: none; margin: 1.5rem 0; flex: 1; }
     .features-list li { margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; }
-    .features-list li::before { content: ''; color: #10b981; font-weight: bold; }
+    .features-list li::before { content: '\2713'; color: #10b981; font-weight: bold; }
     
     .cta-banner { background: var(--card-bg); border: 1px solid var(--border); border-radius: 1rem; padding: 3rem; max-width: 1000px; margin: 0 auto 4rem; text-align: left; display: flex; align-items: center; justify-content: space-between; }
     .cta-banner h2 { font-size: 2rem; margin-bottom: 1rem; }
@@ -100,7 +100,7 @@
   <nav>
     <div class="nav-content">
       <div class="nav-logo">
-        <img src="/assets/swiftdisplaylogo.png" alt="SwiftDisplay" style="height: 32px; margin-right: 8px; vertical-align: middle;">
+        <img src="/assets/swiftdisplaylogo.png" alt="SwiftDisplay" style="height: 48px; margin-right: 8px; vertical-align: middle;">
       </div>
       <div class="nav-links">
         <a href="#" data-i18n="landing.nav.home">Home</a>
@@ -126,118 +126,121 @@
     <a href="/login.html?signup=1" class="btn btn-primary" data-i18n="landing.hero.cta" style="margin-bottom: 2rem;">Start Your Free Trial</a>
   </div>
 
-  <div class="relative mx-auto max-w-5xl" style="padding: 0 2rem; margin-bottom: 4rem;"><div class="block md:hidden"><img src="/_assets/v11/5937e7661878c5933316d555f5b35b752d0ab50e.png" alt="Digital Signage Interface" class="w-full rounded-xl shadow-lg" style="max-width: 100%;"></div><div class="hidden md:block relative w-full" style="width: 90%; margin: 0px auto; aspect-ratio: 16 / 9; background: linear-gradient(145deg, rgb(42, 42, 42), rgb(26, 26, 26)); border-radius: 12px; padding: 12px; box-shadow: rgba(0, 0, 0, 0.5) 0px 20px 60px, rgba(255, 255, 255, 0.1) 0px 0px 0px 2px inset; position: relative;"><div class="relative w-full h-full bg-black rounded-lg overflow-hidden" style="box-shadow: rgba(0, 0, 0, 0.8) 0px 0px 20px inset; position: relative; height: 100%;"><iframe src="https://goldencreative.b-cdn.net/golden/1785853071392_swiftdisplay-golden-creative-signage-final.html" class="w-full h-full border-0" title="Golden Global Display - Live Preview" allow="autoplay" style="display: block; pointer-events: none; width: 100%; height: 100%; border: 0;"></iframe><div class="absolute inset-0 pointer-events-none" style="background: linear-gradient(135deg, transparent 0%, rgba(255, 255, 255, 0.03) 50%, transparent 100%); position: absolute; top: 0; left: 0; right: 0; bottom: 0;"></div></div><div class="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-full" style="width: 120px; height: 8px; background: linear-gradient(rgb(42, 42, 42), rgb(26, 26, 26)); border-radius: 0px 0px 8px 8px; margin-top: 4px; position: absolute; left: 50%; bottom: 0; transform: translate(-50%, 100%);"></div><div class="absolute bottom-0 left-1/2 transform -translate-x-1/2" style="width: 60px; height: 20px; background: linear-gradient(rgb(42, 42, 42), rgb(26, 26, 26)); border-radius: 4px; margin-top: -10px; box-shadow: rgba(0, 0, 0, 0.3) 0px 4px 8px; position: absolute; left: 50%; bottom: 0; transform: translateX(-50%);"></div></div></div>
-
   <div class="section-title">
     <h2 data-i18n="landing.industry.title">Tailored for your industry</h2>
     <p data-i18n="landing.industry.subtitle">Flexible solutions for diverse environments.</p>
   </div>
   <div class="grid grid-3">
     <div class="card">
-      <div class="card-icon"></div>
-      <h3 data-i18n="landing.industry.healthcare">Healthcare</h3>
-      <p data-i18n="landing.industry.healthcare_desc">Enhance patient experiences, reduce wait times, and improve clinic flow.</p>
+      <div class="card-icon"><i class="fa-regular fa-clock"></i></div>
+      <h3>Hospitality</h3>
+      <p>Welcome guests with dynamic lobby displays and event schedules.</p>
     </div>
     <div class="card">
-      <div class="card-icon"></div>
-      <h3 data-i18n="landing.industry.education">Education</h3>
-      <p data-i18n="landing.industry.education_desc">Keep students informed with real-time news, schedules, and alerts.</p>
+      <div class="card-icon"><i class="fa-solid fa-desktop"></i></div>
+      <h3>Corporate</h3>
+      <p>Keep teams aligned with KPIs, news, and internal announcements.</p>
     </div>
     <div class="card">
-      <div class="card-icon">️</div>
-      <h3 data-i18n="landing.industry.retail">Retail & Dining</h3>
-      <p data-i18n="landing.industry.retail_desc">Captivate shoppers and diners with vibrant menus and promotions.</p>
+      <div class="card-icon"><i class="fa-solid fa-bolt"></i></div>
+      <h3>Retail & Dining</h3>
+      <p>Showcase menus, promotions, and special offers in real-time.</p>
     </div>
   </div>
 
   <div class="section-title">
-    <h2 data-i18n="landing.anywhere.title">WORKS ANYWHERE</h2>
-    <p data-i18n="landing.anywhere.subtitle">Turn any screen into a display.</p>
+    <h2>WORKS ANYWHERE</h2>
+    <p>Access from any device, anytime</p>
   </div>
   <div class="grid grid-4">
     <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem; background: rgba(239, 68, 68, 0.1); color: #ef4444;"></div>
-      <h3 data-i18n="landing.anywhere.browser">Any browser</h3>
-      <p data-i18n="landing.anywhere.browser_desc">Chrome, Firefox, Safari, Edge, WebOS.</p>
+      <div class="card-icon" style="margin: 0 auto 1rem; background: transparent; color: var(--primary);"><i class="fa-solid fa-globe"></i></div>
+      <h3>Any Browser</h3>
+      <p>Chrome, Firefox, Safari, Edge and more</p>
     </div>
     <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem; background: rgba(245, 158, 11, 0.1); color: #f59e0b;"></div>
-      <h3 data-i18n="landing.anywhere.smartphones">Smartphones</h3>
-      <p data-i18n="landing.anywhere.smartphones_desc">iPhone & Android Mobile.</p>
+      <div class="card-icon" style="margin: 0 auto 1rem; background: transparent; color: var(--primary);"><i class="fa-solid fa-mobile-screen"></i></div>
+      <h3>Smartphones</h3>
+      <p>iOS and Android fully supported</p>
     </div>
     <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem; background: rgba(59, 130, 246, 0.1); color: #3b82f6;"></div>
-      <h3 data-i18n="landing.anywhere.smart_tvs">Smart TVs</h3>
-      <p data-i18n="landing.anywhere.smart_tvs_desc">LG WebOS, Samsung Tizen OS, Roku.</p>
+      <div class="card-icon" style="margin: 0 auto 1rem; background: transparent; color: var(--primary);"><i class="fa-solid fa-desktop"></i></div>
+      <h3>Smart TVs</h3>
+      <p>Televisions with integrated browser</p>
     </div>
-    <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem; background: rgba(16, 185, 129, 0.1); color: #10b981;"></div>
-      <h3 data-i18n="landing.anywhere.android_tvs">Android TVs</h3>
-      <p data-i18n="landing.anywhere.android_tvs_desc">Sony, TCL, Hisense.</p>
+    <div class="card" style="text-align:center; border: 1px solid var(--primary);">
+      <div class="card-icon" style="margin: 0 auto 1rem; background: var(--primary); color: white;"><i class="fa-solid fa-tv"></i></div>
+      <h3>Android TV</h3>
+      <p style="color: var(--primary); font-weight: 600;">100% remote kiosk system</p>
     </div>
   </div>
 
   <div class="section-title">
-    <h2 data-i18n="landing.customization.title">CUSTOMIZATION OPTIONS</h2>
-    <p data-i18n="landing.customization.subtitle">Your displays, totally adapted to your brand & business.</p>
+    <h2>CUSTOMIZATION OPTIONS</h2>
+    <p>Create unique displays perfectly adapted to your business</p>
   </div>
-  <div class="grid grid-4" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
+  <div class="grid grid-3">
     <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem;"></div>
-      <h3 data-i18n="landing.customization.custom_domains" style="font-size:1rem;">Custom Domains</h3>
-      <p data-i18n="landing.customization.custom_domains_desc" style="font-size:0.75rem;">Bring your domain for your display URLs.</p>
+      <div class="card-icon" style="margin: 0 auto 1rem; color: var(--primary); background: transparent;"><i class="fa-solid fa-user-group"></i></div>
+      <h3 style="font-size:1rem;">Partner Slideshow</h3>
+      <p style="font-size:0.75rem;">Display multiple partner logos in automatic rotation</p>
     </div>
     <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem;"></div>
-      <h3 data-i18n="landing.customization.whitelabel" style="font-size:1rem;">Whitelabel UX</h3>
-      <p data-i18n="landing.customization.whitelabel_desc" style="font-size:0.75rem;">Complete whitelabel solutions for agencies.</p>
+      <div class="card-icon" style="margin: 0 auto 1rem; color: var(--primary); background: transparent;"><i class="fa-solid fa-cloud-sun"></i></div>
+      <h3 style="font-size:1rem;">Weather Forecast</h3>
+      <p style="font-size:0.75rem;">Display current weather and 3-day forecast for any city</p>
     </div>
     <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem;"></div>
-      <h3 data-i18n="landing.customization.multi_org" style="font-size:1rem;">Multi-organization</h3>
-      <p data-i18n="landing.customization.multi_org_desc" style="font-size:0.75rem;">Manage multiple clients from a single login.</p>
+      <div class="card-icon" style="margin: 0 auto 1rem; color: var(--primary); background: transparent;"><i class="fa-solid fa-clock"></i></div>
+      <h3 style="font-size:1rem;">Digital/Analog Clock</h3>
+      <p style="font-size:0.75rem;">Choose between digital or modern analog clock</p>
     </div>
     <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem;"></div>
-      <h3 data-i18n="landing.customization.plugins" style="font-size:1rem;">Plugins</h3>
-      <p data-i18n="landing.customization.plugins_desc" style="font-size:0.75rem;">Connect integrations and data sources.</p>
+      <div class="card-icon" style="margin: 0 auto 1rem; color: var(--primary); background: transparent;"><i class="fa-solid fa-image"></i></div>
+      <h3 style="font-size:1rem;">Images</h3>
+      <p style="font-size:0.75rem;">Upload images and create custom slideshows</p>
     </div>
     <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem;"></div>
-      <h3 data-i18n="landing.customization.roles" style="font-size:1rem;">Roles</h3>
-      <p data-i18n="landing.customization.roles_desc" style="font-size:0.75rem;">Fine-grained RBAC access control.</p>
+      <div class="card-icon" style="margin: 0 auto 1rem; color: var(--primary); background: transparent;"><i class="fa-solid fa-video"></i></div>
+      <h3 style="font-size:1rem;">Videos</h3>
+      <p style="font-size:0.75rem;">Play promotional videos and multimedia content</p>
     </div>
     <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem;"></div>
-      <h3 data-i18n="landing.customization.branding" style="font-size:1rem;">Branding Workspace</h3>
-      <p data-i18n="landing.customization.branding_desc" style="font-size:0.75rem;">Custom colors and logos per org.</p>
+      <div class="card-icon" style="margin: 0 auto 1rem; color: var(--primary); background: transparent;"><i class="fa-solid fa-message"></i></div>
+      <h3 style="font-size:1rem;">Scrolling Messages</h3>
+      <p style="font-size:0.75rem;">Ticker with custom moving messages</p>
     </div>
     <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem;"></div>
-      <h3 data-i18n="landing.customization.premium" style="font-size:1rem;">Premium Support</h3>
-      <p data-i18n="landing.customization.premium_desc" style="font-size:0.75rem;">Highest priority technical support.</p>
+      <div class="card-icon" style="margin: 0 auto 1rem; color: var(--primary); background: transparent;"><i class="fa-solid fa-table-columns"></i></div>
+      <h3 style="font-size:1rem;">Various Layouts</h3>
+      <p style="font-size:0.75rem;">9 predefined layouts for different needs</p>
+    </div>
+    <div class="card" style="text-align:center; border: 1px solid var(--primary);">
+      <div class="card-icon" style="margin: 0 auto 1rem; color: white; background: var(--primary);"><i class="fa-solid fa-sliders"></i></div>
+      <h3 style="font-size:1rem;">Custom Layout</h3>
+      <p style="font-size:0.75rem; color: var(--primary);">Premium Plan: Create layouts adapted to your measurements</p>
     </div>
     <div class="card" style="text-align:center;">
-      <div class="card-icon" style="margin: 0 auto 1rem;"></div>
-      <h3 data-i18n="landing.customization.custom_apps" style="font-size:1rem;">Custom Apps</h3>
-      <p data-i18n="landing.customization.custom_apps_desc" style="font-size:0.75rem;">We build custom integrations just for you.</p>
+      <div class="card-icon" style="margin: 0 auto 1rem; color: var(--primary); background: transparent;"><i class="fa-solid fa-person-chalkboard"></i></div>
+      <h3 style="font-size:1rem;">Presentations</h3>
+      <p style="font-size:0.75rem;">We create price lists and other visual elements adapted to your brand</p>
     </div>
   </div>
   
   <div id="portable" class="portable-tv">
-    <div style="background: var(--card-bg); border: 1px solid var(--border); width: 40%; aspect-ratio: 9/16; border-radius: 12px; display:flex; align-items:center; justify-content:center;">
-      <img src="/assets/swiftdisplaylogo.png" alt="Portable TV" style="width: 50%;">
+    <div style="width: 40%; display:flex; align-items:center; justify-content:center;">
+      <img src="https://swiftdisplay.figma.site/_assets/v11/58400735338929ccb2e38020917aa8f319c66397.png" alt="Portable TV" style="max-width: 100%; height: auto;">
     </div>
     <div class="portable-tv-content">
-      <div class="badge" data-i18n="landing.portable.badge">NEW PRODUCT!</div>
-      <h2 data-i18n="landing.portable.title" style="font-size:2.5rem; margin-bottom:1rem;">Go Mobile with Portable TV</h2>
-      <p data-i18n="landing.portable.desc" style="color:#6b7280; margin-bottom: 2rem;">Our SwiftDisplay standalone Portable TV is battery-powered, meaning you can easily move it wherever it is needed to bring your content to life anywhere.</p>
+      <div class="badge">NEW PRODUCT</div>
+      <h2 style="font-size:2.5rem; margin-bottom:1rem;">Go Mobile with Portable TV</h2>
+      <p style="color:#6b7280; margin-bottom: 2rem;">Take your message anywhere. Our portable digital signage solutions are battery-powered, weather-resistant, and perfect for events, pop-up stores, and flexible office spaces.</p>
       <ul class="features-list">
-        <li data-i18n="landing.portable.battery">10h Battery life</li>
-        <li data-i18n="landing.portable.trolley">Built-in trolley</li>
-        <li data-i18n="landing.portable.touch">Lightweight Rubber Screen</li>
+        <li>10+ Hour Battery Life</li>
+        <li>4G/5G Connectivity</li>
+        <li>Ultra-bright Outdoor Screen</li>
       </ul>
-      <button class="btn btn-secondary" data-i18n="landing.portable.cta" style="margin-top:1rem;">Learn More</button>
+      <button class="btn btn-secondary" style="margin-top:1rem;">Learn More</button>
     </div>
   </div>
 
@@ -356,7 +359,7 @@
       localStorage.setItem('screentinker_theme', next);
     });
     
-    const savedTheme = localStorage.getItem('screentinker_theme') || 'dark';
+    const savedTheme = localStorage.getItem('screentinker_theme') || 'light';
     document.documentElement.setAttribute('data-theme', savedTheme);
   </script>
 <script src="/js/faq-chat.js"></script>
