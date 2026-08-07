@@ -1,0 +1,177 @@
+#swift-chat-widget {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  font-family: 'Inter', sans-serif;
+}
+
+#swift-chat-launcher {
+  background: var(--primary, #ef4444);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  transition: transform 0.2s;
+}
+#swift-chat-launcher:hover {
+  transform: scale(1.05);
+}
+#swift-chat-launcher.hidden {
+  display: none;
+}
+
+#swift-chat-panel {
+  width: 350px;
+  max-width: calc(100vw - 48px);
+  height: 500px;
+  max-height: calc(100vh - 48px);
+  background: var(--card-bg, #ffffff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 12px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--text, #111827);
+  transition: opacity 0.3s, transform 0.3s;
+  transform-origin: bottom right;
+}
+
+#swift-chat-panel.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.9);
+  display: none;
+}
+
+.swift-chat-header {
+  background: #1e3a8a;
+  color: white;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.swift-chat-header img {
+  width: 32px;
+  height: 32px;
+  background: white;
+  border-radius: 6px;
+  padding: 2px;
+}
+.swift-chat-header-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.swift-chat-header-info strong {
+  font-size: 14px;
+}
+.swift-chat-header-info span {
+  font-size: 12px;
+  opacity: 0.8;
+}
+#swift-chat-close {
+  background: transparent;
+  border: none;
+  color: white;
+  font-size: 24px;
+  cursor: pointer;
+  opacity: 0.8;
+}
+#swift-chat-close:hover {
+  opacity: 1;
+}
+
+.swift-chat-messages {
+  flex: 1;
+  padding: 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--bg, #f9fafb);
+}
+
+.swift-message {
+  max-width: 85%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+.swift-message.system {
+  background: var(--card-bg, #ffffff);
+  border: 1px solid var(--border, #e5e7eb);
+  align-self: flex-start;
+  border-bottom-left-radius: 2px;
+}
+.swift-message.user {
+  background: var(--primary, #ef4444);
+  color: white;
+  align-self: flex-end;
+  border-bottom-right-radius: 2px;
+}
+
+.swift-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+  margin-top: 8px;
+}
+.swift-options button {
+  background: transparent;
+  border: 1px solid var(--primary, #ef4444);
+  color: var(--primary, #ef4444);
+  padding: 6px 12px;
+  border-radius: 16px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: right;
+}
+.swift-options button:hover {
+  background: var(--primary, #ef4444);
+  color: white;
+}
+
+.swift-chat-input {
+  padding: 12px;
+  border-top: 1px solid var(--border, #e5e7eb);
+  display: flex;
+  gap: 8px;
+  background: var(--card-bg, #ffffff);
+}
+.swift-chat-input input {
+  flex: 1;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 20px;
+  padding: 8px 16px;
+  font-size: 14px;
+  outline: none;
+  background: var(--bg, #f9fafb);
+  color: var(--text, #111827);
+}
+.swift-chat-input input:focus {
+  border-color: var(--primary, #ef4444);
+}
+#swift-chat-send {
+  background: var(--primary, #ef4444);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}

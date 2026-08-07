@@ -48,6 +48,7 @@ export const api = {
   clearPip: (id, pipId) => request('/pip/clear', { method: 'POST', body: JSON.stringify({ device_id: id, pip_id: pipId || undefined }) }),
 
   // Provisioning
+  provisionUrlDisplay: (name) => request('/provision/url', { method: 'POST', body: JSON.stringify({ name }) }),
   pairDevice: (pairing_code, name) => request('/provision/pair', {
     method: 'POST',
     body: JSON.stringify({ pairing_code, name })

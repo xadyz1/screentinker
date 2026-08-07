@@ -7,8 +7,8 @@ const ASSETS_TO_CACHE = [
   '/css/variables.css',
   '/css/main.css',
   '/js/app.js',
-  '/assets/icon-192.png',
-  '/assets/icon-512.png',
+  '/assets/swiftdisplaylogo.png',
+  '/assets/swiftdisplaylogo.png',
   'https://fonts.googleapis.com/css2?family=Goldman:wght@400;700&family=Michroma&display=swap'
 ];
 

@@ -935,6 +935,34 @@ app.post('/api/provision/pair', requireAuth, resolveTenancy, checkDeviceLimit, (
   res.json(updated);
 });
 
+app.post('/api/provision/url', requireAuth, resolveTenancy, checkDeviceLimit, (req, res) => {
+  if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before provisioning.' });
+  
+  const name = req.body.name || 'URL Display ' + (db.prepare('SELECT COUNT(*) as count FROM devices WHERE user_id = ?').get(req.user.id).count + 1);
+  const id = uuidv4();
+  const device_token = require('crypto').randomBytes(32).toString('hex');
+  const settingsPin = String(Math.floor(100000 + Math.random() * 900000));
+  
+  try {
+    db.prepare(`
+      INSERT INTO devices (id, name, user_id, workspace_id, device_token, status, settings_pin, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'online', ?, strftime('%s','now'), strftime('%s','now'))
+    `).run(id, name, req.user.id, req.workspaceId, device_token, settingsPin);
+  } catch (e) {
+    return res.status(500).json({ error: 'Failed to provision URL display' });
+  }
+
+  const updated = db.prepare('SELECT * FROM devices WHERE id = ?').get(id);
+  require('./lib/device-sanitize').stripDeviceSecrets(updated);
+  
+  const { workspaceRoom, emitToWorkspace } = require('./lib/socket-rooms');
+  emitToWorkspace(dashboardNs, workspaceRoom(updated.workspace_id), 'dashboard:device-added', updated);
+
+  // Return the raw token ONLY once so the client can construct the URL
+  res.json({ ...updated, _raw_token: device_token });
+});
+
+
 // #146 Item C/E: OTA update-check log — COALESCED (one summarized line per reason per
 // window) so a poll flood can't turn synchronous stdout writes into a loop hog. Never
 // keys on IP for any decision (SNAT).

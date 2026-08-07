@@ -50,7 +50,7 @@ export async function render(container) {
   const brandName = branding.brand_name || 'SwiftDisplay';
   // Branded logo if set, else the default SwiftDisplay glyph.
   const theme = document.documentElement.getAttribute('data-theme') || 'dark';
-  const defaultLogo = theme === 'light' ? '/assets/logoswift.png' : '/assets/logowhiteswift.png';
+  const defaultLogo = theme === 'light' ? '/assets/swiftdisplaylogo.png' : '/assets/swiftdisplaylogo.png';
   const logoHtml = branding.logo_url
     ? `<img src="${brandEsc(branding.logo_url)}" alt="${brandEsc(brandName)}" style="max-height:48px;max-width:200px;margin:0 auto 12px;display:block">`
     : `<img src="${defaultLogo}" alt="${brandEsc(brandName)}" style="max-height:48px;max-width:200px;margin:0 auto 12px;display:block">`;

@@ -1,4 +1,6 @@
-<!DOCTYPE html>
+import re
+
+html_content = """<!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
@@ -358,6 +360,9 @@
     const savedTheme = localStorage.getItem('screentinker_theme') || 'dark';
     document.documentElement.setAttribute('data-theme', savedTheme);
   </script>
-<script src="/js/faq-chat.js"></script>
 </body>
 </html>
+"""
+
+with open('frontend/landing.html', 'w') as f:
+    f.write(html_content)

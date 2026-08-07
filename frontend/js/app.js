@@ -47,7 +47,7 @@ function updateDashboardThemeIcon() {
       themeIcon.classList.add('fa-sun');
     }
     if (mainLogo) {
-      mainLogo.src = '/assets/logoswift.png';
+      mainLogo.src = '/assets/swiftdisplaylogo.png';
     }
   } else {
     if (themeIcon) {
@@ -55,7 +55,7 @@ function updateDashboardThemeIcon() {
       themeIcon.classList.add('fa-moon');
     }
     if (mainLogo) {
-      mainLogo.src = '/assets/logowhiteswift.png';
+      mainLogo.src = '/assets/swiftdisplaylogo.png';
     }
   }
 }
