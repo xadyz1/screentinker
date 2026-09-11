@@ -11,7 +11,7 @@ const secretbox = require('./secretbox');
 const { hashToken } = require('../middleware/apiToken');
 
 const STEP_SEC = 30;
-const ISSUER = 'ScreenTinker';
+const ISSUER = 'SwiftDisplay';
 authenticator.options = { window: 1 }; // accept ±1 step (±30s) for clock skew
 
 function generateSecret() { return authenticator.generateSecret(); }            // base32 plaintext

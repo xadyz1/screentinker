@@ -145,7 +145,7 @@ function buildGraphPayload(to, subject, html, fromName) {
       from: {
         emailAddress: {
           address: config.graphSenderEmail,
-          name: fromName || config.graphSenderName || 'ScreenTinker',
+          name: fromName || config.graphSenderName || 'SwiftDisplay',
         },
       },
     },
