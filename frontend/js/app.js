@@ -8,8 +8,13 @@ import * as billing from './views/billing.js';
 import * as layoutEditor from './views/layout-editor.js';
 import * as schedule from './views/schedule.js';
 import * as widgets from './views/widgets.js';
+import * as slides from './views/slides.js';
+import * as dataSources from './views/data-sources.js';
+import * as reviews from './views/reviews.js';
 import * as videoWall from './views/video-wall.js';
 import * as reports from './views/reports.js';
+import * as servers from './views/servers.js';
+import * as triggers from './views/triggers.js';
 import * as activity from './views/activity.js';
 import * as kiosk from './views/kiosk.js';
 import * as onboarding from './views/onboarding.js';
@@ -25,9 +30,61 @@ import * as noWorkspace from './views/no-workspace.js';
 import { applyBranding } from './branding.js';
 import { t } from './i18n.js';
 import { isPlatformAdmin } from './utils.js';
-import { renderWorkspaceSwitcher } from './components/workspace-switcher.js';
+import { renderWorkspaceSwitcher, selectedRemoteOrg, clearRemoteOrg } from './components/workspace-switcher.js';
+
+/*
+ * ⚠️ A PERSISTENT BANNER WHILE VIEWING SOMEBODY ELSE'S SERVER, and it is not decoration.
+ *
+ * Every screen in the app now potentially shows another company's estate, and the single most
+ * expensive mistake available here is acting on the wrong customer's screens because the page
+ * looked like home. The banner names the org, says the data is read-only for now, and offers one
+ * click back — so "which server am I on" is never a question the UI leaves to memory.
+ */
+function renderRemoteOrgBanner() {
+  /*
+   * ⚠️ MOUNTED IN #banners, INSIDE the content column — not prepended to <body>.
+   *
+   * The first version used document.body.prepend with position:sticky, which put a full-width block
+   * above the app shell: it sat beside the sidebar rather than above the page, painted a slab of
+   * amber down the left column and shoved the layout apart. The app already has a slot for exactly
+   * this, above the view and inside the content area, and using it means the notice moves with the
+   * page instead of fighting the chrome.
+   *
+   * ⚠️ Restrained on purpose. The workspace switcher already reads "Acme Retail · remote" a few
+   * pixels away, so this is a reminder, not an alarm — a solid warning-coloured bar for a normal,
+   * chosen state is the kind of thing people stop seeing within a day.
+   */
+  const host = document.getElementById('banners');
+  if (!host) return;
+  const existing = document.getElementById('remoteOrgBanner');
+  const org = selectedRemoteOrg();
+  if (!org) { if (existing) existing.remove(); return; }
+
+  const el = existing || document.createElement('div');
+  el.id = 'remoteOrgBanner';
+  el.style.cssText = 'display:flex;gap:10px;align-items:center;flex-wrap:wrap;' +
+    'border-left:3px solid var(--warning,#f59e0b);background:var(--bg-card);' +
+    'padding:8px 12px;margin:0 0 12px;font-size:12px;border-radius:0 4px 4px 0';
+  const name = String(org.name || '').replace(/[&<>"]/g, '');
+  el.innerHTML = `
+    <span>Viewing <strong>${name}</strong> on another server${
+      org.stale ? ' — not currently reachable, showing last known state' : ''}.</span>
+    <!-- ⚠️ Says what this operator may actually do, rather than a fixed "read-only for now" that
+         stayed on the screen after write shipped. The flag is what the CHILD announced, so a
+         customer who has granted nothing still reads as read-only — which is both true and the
+         safe way for this to be wrong. Playlists only, and it says so: an operator who reads
+         "you can make changes" and then cannot upload has been misled by a half-truth. -->
+    <span style="color:var(--text-muted)">${org.writable
+      ? 'You may change playlists here. Content and settings stay read-only.'
+      : 'Read-only — this customer has not granted changes from here.'}</span>
+    <button id="leaveRemoteOrg" class="btn btn-secondary btn-sm" style="margin-left:auto">
+      Back to this server</button>`;
+  if (!existing) host.appendChild(el);
+  el.querySelector('#leaveRemoteOrg').onclick = () => { clearRemoteOrg(); window.location.reload(); };
+}
 import { showToast } from './components/toast.js';
-import { api } from './api.js';
+import { api, meshCapability } from './api.js';
+import { esc } from './utils.js';
 
 const app = document.getElementById('app');
 const sidebar = document.querySelector('.sidebar');
@@ -163,13 +220,19 @@ const NAV_LABEL_KEYS = {
   playlists: 'nav.playlists',
   layouts: 'nav.layouts',
   widgets: 'nav.widgets',
+  slides: 'nav.slides',
+  'data-sources': 'nav.data_sources',
+  reviews: 'nav.reviews',
   schedule: 'nav.schedule',
   walls: 'nav.walls',
   reports: 'nav.reports',
+  servers: 'nav.servers',
+  triggers: 'nav.triggers',
   kiosk: 'nav.kiosk',
   designer: 'nav.designer',
   activity: 'nav.activity',
   teams: 'nav.teams',
+  members: 'nav.members',
   help: 'nav.help',
   settings: 'nav.settings',
   billing: 'nav.subscription',
@@ -238,7 +301,21 @@ async function refreshCurrentUser() {
     localStorage.setItem('user', JSON.stringify(fresh));
     // Re-render the workspace switcher on every /me refresh - cheap, and keeps
     // the dropdown in sync if a workspace was added/removed in another tab.
-    renderWorkspaceSwitcher(fresh);
+    //
+    // ⚠️ Remote orgs are fetched separately and FAIL SILENTLY. A server with no mesh has no such
+    // endpoint, and an install that has never heard of the feature must not see an error about it.
+    // #329: /orgs is a HUB route. On a server that is not a hub it 404s, and this runs on every
+    // /me refresh, so the console filled up with them. `null` means the server did not say, and
+    // the old ask-and-shrug path stands.
+    let remoteOrgs = [];
+    if (meshCapability('hub') !== false) {
+      try {
+        const r = await fetch('/api/mesh/orgs', { headers: { Authorization: `Bearer ${token}` } });
+        if (r.ok) remoteOrgs = (await r.json()).orgs || [];
+      } catch (e) { remoteOrgs = []; }
+    }
+    renderWorkspaceSwitcher(fresh, remoteOrgs);
+    renderRemoteOrgBanner();
     window.dispatchEvent(new CustomEvent('user-refreshed', { detail: fresh }));
     // #12: /me is the first place accessible_workspaces is known. If it resolves
     // to zero (org-less user), send them to the empty state now - on a fresh
@@ -247,10 +324,66 @@ async function refreshCurrentUser() {
     // a redirect loop.
     const hash = window.location.hash || '#/';
     if (hasNoAccessibleWorkspace(fresh)
-        && hash !== '#/no-workspace' && hash !== '#/login' && hash !== '#/change-password') {
+        && hash !== '#/no-workspace' && !hash.startsWith('#/login') && hash !== '#/change-password') {
       window.location.hash = '#/no-workspace';
     }
   } catch {}
+}
+
+// Help tips are the main in-product explanation, and they were reachable by HOVER only —
+// invisible on a tablet or phone, and unreachable from a keyboard. Bound once at the document
+// level so every view's tips work without each having to opt in: tapping toggles one, Escape or
+// a tap elsewhere closes it, and the marker is made focusable so Tab can reach it.
+let tipsBound = false;
+function enableHelpTips() {
+  document.querySelectorAll('.help-tip:not([tabindex])').forEach((el) => {
+    el.setAttribute('tabindex', '0');
+    el.setAttribute('role', 'button');
+    el.setAttribute('aria-label', el.dataset.tip || 'Help');
+  });
+  if (tipsBound) return;
+  tipsBound = true;
+  // A native title= is hover-only too, so icon-only buttons (rename a wall, remove a device
+  // from one, manage members) explain themselves on a desktop and say nothing at all on a
+  // touchscreen. Long-press one and show its label as a toast — the text already exists and is
+  // translated, it simply had no way to reach a finger.
+  let pressTimer = null;
+  const cancelPress = () => { clearTimeout(pressTimer); pressTimer = null; };
+  document.addEventListener('touchstart', (e) => {
+    const el = e.target.closest('[title]');
+    if (!el) return;
+    const label = el.getAttribute('title');
+    if (!label) return;
+    pressTimer = setTimeout(() => showToast(label, 'info'), 500);
+  }, { passive: true });
+  ['touchend', 'touchmove', 'touchcancel'].forEach(ev =>
+    document.addEventListener(ev, cancelPress, { passive: true }));
+  // Views render from ~20 call sites and modals appear later still, so watch the DOM rather
+  // than trying to call this after each one — a tip added by a route nobody remembered to hook
+  // would otherwise be keyboard-unreachable again.
+  const host = document.getElementById('app') || document.body;
+  let pending = null;
+  new MutationObserver(() => {
+    clearTimeout(pending);
+    pending = setTimeout(() => {
+      document.querySelectorAll('.help-tip:not([tabindex])').forEach((el) => {
+        el.setAttribute('tabindex', '0');
+        el.setAttribute('role', 'button');
+        el.setAttribute('aria-label', el.dataset.tip || 'Help');
+      });
+    }, 50);
+  }).observe(host, { childList: true, subtree: true });
+  document.addEventListener('click', (e) => {
+    const tip = e.target.closest('.help-tip');
+    document.querySelectorAll('.help-tip.is-open').forEach((o) => { if (o !== tip) o.classList.remove('is-open'); });
+    if (tip) { e.preventDefault(); tip.classList.toggle('is-open'); }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') document.querySelectorAll('.help-tip.is-open').forEach((o) => o.classList.remove('is-open'));
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('help-tip')) {
+      e.preventDefault(); e.target.classList.toggle('is-open');
+    }
+  });
 }
 
 function route() {
@@ -275,14 +408,35 @@ function route() {
     }
   }
 
+  // Password-reset links arrive from email on a browser that is by definition NOT logged
+  // in, and carry a one-time token in the hash. This must be handled BEFORE the redirect
+  // below: rewriting the hash would discard the token and the emailed link would silently
+  // do nothing. The login view reads the token off the hash and shows the new-password form.
+  const isResetRoute = hash.startsWith('#/reset-password');
+
+  /*
+   * ⚠️ The SAME rule the comment above states, for the login route.
+   *
+   * The server finishes every single sign-on by redirecting to `#/login?sso=1` (claim the session)
+   * or `#/login?sso_error=<code>` (say what went wrong). Matching the hash EXACTLY meant neither
+   * survived: an unauthenticated browser — the only kind that arrives here — had the hash rewritten
+   * to a bare `#/login` and the query was gone before the login view ever ran. So a user who
+   * authenticated perfectly at their identity provider landed back on a clean login page, still
+   * signed out, with no message; and all sixteen error codes rendered SILENCE, which is worse than
+   * a wrong message because there is nothing to report or search for.
+   *
+   * It took the pre-existing `?verified=1` email-verification toast with it.
+   */
+  const isLoginRoute = hash === '#/login' || hash.startsWith('#/login?');
+
   // Auth check - redirect to login if not authenticated
-  if (!isAuthenticated() && hash !== '#/login') {
+  if (!isAuthenticated() && !isLoginRoute && !isResetRoute) {
     window.location.hash = '#/login';
     return;
   }
 
   // If authenticated and on login page, redirect to dashboard or onboarding
-  if (isAuthenticated() && hash === '#/login') {
+  if (isAuthenticated() && (isLoginRoute || isResetRoute)) {
     window.location.hash = localStorage.getItem('rd_onboarded') ? '#/' : '#/onboarding';
     return;
   }
@@ -359,8 +513,10 @@ function route() {
     return;
   }
 
-  // Login page - hide sidebar
-  if (hash === '#/login') {
+  // Login page (and password-reset links from email) - hide sidebar.
+  // Matches `#/login?...` too: the single sign-on return carries `?sso=1` / `?sso_error=<code>`,
+  // and an exact comparison meant the login view was never rendered for either.
+  if (isLoginRoute || isResetRoute) {
     sidebar.style.display = 'none';
     app.style.marginLeft = '0';
     const mb = document.getElementById('mobileMenuBtn');
@@ -390,6 +546,8 @@ function route() {
     else if ((hash === '#/playlists' || hash.startsWith('#/playlists/')) && link.dataset.view === 'playlists') link.classList.add('active');
     else if (hash === '#/schedule' && link.dataset.view === 'schedule') link.classList.add('active');
     else if (hash === '#/widgets' && link.dataset.view === 'widgets') link.classList.add('active');
+    else if (hash === '#/slides' && link.dataset.view === 'slides') link.classList.add('active');
+    else if ((hash === '#/data-sources' || hash.startsWith('#/data-sources/')) && link.dataset.view === 'data-sources') link.classList.add('active');
     else if ((hash.startsWith('#/wall') || hash === '#/walls') && link.dataset.view === 'walls') link.classList.add('active');
     else if (hash === '#/reports' && link.dataset.view === 'reports') link.classList.add('active');
     else if (hash === '#/activity' && link.dataset.view === 'activity') link.classList.add('active');
@@ -419,12 +577,34 @@ function route() {
   } else if (hash === '#/schedule') {
     currentView = schedule;
     schedule.render(app);
+  } else if (hash === '#/slides') {
+    currentView = slides;
+    slides.render(app);
+  } else if (hash === '#/data-sources' || hash.startsWith('#/data-sources/')) {
+    currentView = dataSources;
+    dataSources.render(app);
+  } else if (hash === '#/reviews') {
+    currentView = reviews;
+    reviews.render(app);
   } else if (hash === '#/widgets') {
     currentView = widgets;
     widgets.render(app);
   } else if (hash === '#/walls' || hash.startsWith('#/wall/')) {
     currentView = videoWall;
     videoWall.render(app);
+  } else if (hash === '#/triggers') {
+    currentView = triggers;
+    triggers.render(app);
+  } else if (hash === '#/servers') {
+    /*
+     * ⚠️ Its own route, deliberately NOT behind the workspace switcher. The switcher
+     * mints a JWT with current_workspace_id and reloads — it assumes a LOCAL, WRITABLE
+     * workspace. Putting remote ones behind it would give every write surface (bulk
+     * assign, drag-to-group, playlist assign, the schedule editor) a disabled state,
+     * and a UI full of dead controls teaches people the product is broken.
+     */
+    currentView = servers;
+    servers.render(app);
   } else if (hash === '#/reports') {
     currentView = reports;
     reports.render(app);
@@ -442,6 +622,18 @@ function route() {
   } else if (hash === '#/teams' || hash.startsWith('#/team/')) {
     currentView = teams;
     teams.render(app);
+  } else if (hash === '#/members') {
+    // The static nav link cannot know the workspace id, so resolve it here from the signed-in
+    // user. Falls back to the first accessible workspace, and to the dashboard when there is
+    // none at all — better than rendering a members page for nothing.
+    // /me is cached in localStorage by refreshCurrentUser(); there is no in-memory copy.
+    let me = null;
+    try { me = JSON.parse(localStorage.getItem('user') || 'null'); } catch (_) { me = null; }
+    const activeWs = me?.current_workspace_id
+      || (Array.isArray(me?.accessible_workspaces) && me.accessible_workspaces[0]?.id);
+    if (!activeWs) { window.location.hash = '#/'; return; }
+    currentView = workspaceMembers;
+    workspaceMembers.render(app, activeWs);
   } else if (hash.startsWith('#/workspace/') && hash.includes('/members')) {
     const wsId = hash.split('#/workspace/')[1].split('/')[0];
     currentView = workspaceMembers;
@@ -480,6 +672,8 @@ function route() {
 function updateSidebarUser() {
   const user = getCurrentUser();
   if (!user) return;
+  updateVerifyBanner(user);
+  updateWidgetSandboxWarningBanner(user);
 
   // Show admin nav only for platform admins (legacy 'superadmin' or Phase 1 renamed 'platform_admin')
   const adminNav = document.getElementById('adminNavItem');
@@ -489,6 +683,51 @@ function updateSidebarUser() {
   // Runs at boot from the cached user (no flash on warm loads) and again after /me.
   const billingNav = document.getElementById('billingNavItem');
   if (billingNav) billingNav.style.display = user.hide_billing ? 'none' : '';
+
+  /*
+   * Servers appears only when this node is actually a hub.
+   *
+   * ⚠️ ASKED, NOT ASSUMED. There is no client-side flag for MESH_ACCEPT_ENROLLMENT and there should
+   * not be: the server mounts /api/mesh only when it is set, so the honest test is whether the API
+   * answers. A hardcoded flag in the bundle would drift the moment someone changed the env var.
+   *
+   * It starts hidden and is revealed on success, so an ordinary install never flashes a section it
+   * does not have — the same no-flash reasoning as the billing item above.
+   */
+  const serversNav = document.getElementById('serversNavItem');
+  if (serversNav) {
+    /*
+     * ⚠️ EITHER ROLE REVEALS IT, and gating on the hub role alone was a real bug.
+     *
+     * /mesh/nodes exists only when MESH_ACCEPT_ENROLLMENT is set — the HUB half. A node configured
+     * only to report UPWARD has no such route, so the section stayed hidden — and the Connect tab,
+     * which is how that node enrols and how its operator later severs the link, lives inside the
+     * section. A child could be configured to join a mesh and then had no way to do it, or to see
+     * that it had.
+     *
+     * That directly contradicts consent-from-below, which the API already honours: GET /mesh/uplink
+     * answers whatever the flags say, precisely so a link can never be made and then hidden. The nav
+     * gate defeated it one layer up.
+     *
+     * /mesh/capabilities is mounted when EITHER flag is on, or when an uplink already exists, so it
+     * is the honest question to ask: "is this node part of a mesh in any way?"
+     */
+    /*
+     * #329: /me answers this now, so the common case costs no requests at all. The probe below is
+     * kept for when it does NOT answer — a server older than this field, or a cached user from
+     * before it — because a silent `false` there would hide the section on a real mesh node.
+     */
+    const meshEnroll = meshCapability('enroll');
+    if (meshEnroll !== null) {
+      serversNav.style.display = meshEnroll ? '' : 'none';
+    } else {
+      api.get('/mesh/capabilities')
+        .then(() => { serversNav.style.display = ''; })
+        .catch(() => api.get('/mesh/nodes')
+          .then(() => { serversNav.style.display = ''; })
+          .catch(() => { serversNav.style.display = 'none'; }));
+    }
+  }
 
   let userEl = document.getElementById('sidebarUser');
   if (!userEl) {
@@ -501,9 +740,9 @@ function updateSidebarUser() {
 
   userEl.innerHTML = `
     ${user.avatar_url ? `<img src="${user.avatar_url}" style="width:28px;height:28px;border-radius:50%">` :
-      `<div style="width:28px;height:28px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:white">${(user.name || user.email)[0].toUpperCase()}</div>`}
+      `<div style="width:28px;height:28px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:white">${esc((user.name || user.email)[0].toUpperCase())}</div>`}
     <div style="flex:1;min-width:0">
-      <div style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${user.name || user.email}</div>
+      <div style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(user.name || user.email)}</div>
       <div style="font-size:10px;color:var(--text-muted)">${user.role}</div>
     </div>
     <button id="logoutBtn" class="btn-icon" title="${t('auth.sign_out')}" style="flex-shrink:0">
@@ -522,6 +761,70 @@ function updateSidebarUser() {
     window.location.reload();
   });
 }
+
+// Soft-nudge banner for a logged-in but unverified local user (self-host path — hosted never
+// issues a session while unverified, so this only appears there). Sits above #app so it persists
+// across view swaps. Only shown when email_verified is explicitly 0 (undefined on stale caches
+// stays hidden). Cleared automatically once the account verifies.
+function updateVerifyBanner(user) {
+  const existing = document.getElementById('verifyBanner');
+  const unverified = user && user.email_verified === 0 && user.auth_provider === 'local';
+  if (!unverified) { if (existing) existing.remove(); return; }
+  if (existing) return;
+  const bannersEl = document.getElementById('banners');
+  if (!bannersEl) return;
+  const b = document.createElement('div');
+  b.id = 'verifyBanner';
+  b.style.cssText = 'background:var(--warning,#f59e0b);color:#1a1200;padding:9px 16px;font-size:13px;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap';
+  b.innerHTML = `<span>✉️ ${t('auth.verify_banner')}</span>`;
+  const btn = document.createElement('button');
+  btn.className = 'btn btn-sm';
+  btn.style.cssText = 'background:#1a1200;color:#fff;padding:4px 12px';
+  btn.textContent = t('auth.verify_banner_resend');
+  btn.addEventListener('click', async () => {
+    try { await api.resendVerification(user.email); showToast(t('auth.verify_resent'), 'success'); }
+    catch { showToast(t('auth.verify_resend_failed'), 'error'); }
+  });
+  b.appendChild(btn);
+  bannersEl.appendChild(b);
+}
+
+function updateWidgetSandboxWarningBanner(user) {
+  const existing = document.getElementById('widgetSandboxWarningBanner');
+  const disabled = !!user?.current_organization?.widget_sandbox_isolation_disabled;
+  if (!disabled) { if (existing) existing.remove(); return; }
+  if (existing) return;
+  const bannersEl = document.getElementById('banners');
+  if (!bannersEl) return;
+  const b = document.createElement('div');
+  b.id = 'widgetSandboxWarningBanner';
+  b.style.cssText = 'background:var(--danger,#dc2626);color:#fff;padding:10px 16px;font-size:13px;display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;font-weight:600';
+  const text = document.createElement('span');
+  text.style.whiteSpace = 'pre-line';
+  text.textContent = 'Widget sandbox isolation is DISABLED. Widget code in this organization runs\nwith full access to user sessions. Re-enable in Settings > Security.';
+  const link = document.createElement('a');
+  link.href = '#/settings';
+  link.textContent = 'Open Settings';
+  link.style.cssText = 'color:#fff;text-decoration:underline;font-weight:700';
+  b.appendChild(text);
+  b.appendChild(link);
+  bannersEl.appendChild(b);
+}
+
+// Reviews nav badge: how many submissions are waiting on the signed-in user. Silent when approval
+// is off for the workspace (the endpoint returns an empty queue), so nothing lights up unasked.
+async function refreshReviewsBadge() {
+  const badge = document.getElementById('reviewsNavBadge');
+  if (!badge || !isAuthenticated()) return;
+  try {
+    const s = await api.getApprovalSettings();
+    const n = s && s.require_approval ? Number(s.pending_submissions || 0) : 0;
+    badge.textContent = String(n);
+    badge.style.display = n > 0 ? '' : 'none';
+  } catch { badge.style.display = 'none'; }
+}
+window.addEventListener('hashchange', () => { if (location.hash === '#/reviews' || location.hash === '#/members') refreshReviewsBadge(); });
+setTimeout(refreshReviewsBadge, 1500);
 
 // Initialize
 renderNavLabels();
@@ -570,6 +873,10 @@ window.addEventListener('keydown', (e) => {
 // Auto-reload on frontend update (no more hard refresh needed)
 let knownHash = null;
 export function updateVersionIndicator({ version, latest_version, update_available }) {
+  // Published like window.__ST_BRAND_NAME, and for the same reason: things that need the running
+  // version should not each fetch it. components/whats-new.js reads this to decide whether it has
+  // anything to fetch at all, so a dashboard load on an unchanged build costs no extra request.
+  try { if (version) window.__ST_VERSION = version; } catch (_) { /* non-fatal */ }
   const label = document.getElementById('versionLabel');
   const badge = document.getElementById('versionBadge');
   if (label) label.textContent = version ? 'v' + version : '-';
@@ -591,7 +898,19 @@ async function checkVersion() {
       if (toast) {
         const notice = document.createElement('div');
         notice.className = 'toast info';
-        notice.innerHTML = '<span>Dashboard updated. <a href="javascript:location.reload()" style="color:var(--accent);text-decoration:underline;font-weight:600">Reload now</a></span>';
+        const span = document.createElement('span');
+        span.textContent = 'Dashboard updated. ';
+        const link = document.createElement('a');
+        link.textContent = 'Reload now';
+        link.href = '#';
+        link.style.cssText = 'color:var(--accent);text-decoration:underline;font-weight:600';
+        // The dashboard CSP is `script-src 'self'` (no 'unsafe-inline'), which blocks
+        // `javascript:` URIs — so the old `href="javascript:location.reload()"` link was dead
+        // (click did nothing, only a CSP console warning). Use a real click listener, which
+        // runs as first-party script and is CSP-clean.
+        link.addEventListener('click', (e) => { e.preventDefault(); location.reload(); });
+        span.appendChild(link);
+        notice.appendChild(span);
         toast.appendChild(notice);
       }
     }
@@ -630,6 +949,7 @@ if (isAuthenticated()) {
   }, 60000);
 }
 window.addEventListener('hashchange', route);
+enableHelpTips();
 route();
 
 // Close-modal buttons (replaces inline onclick handlers — required for CSP).

@@ -12,6 +12,7 @@
 // autocheckpoint on the main connection as a degraded-but-safe fallback (occasional inline
 // stall << unbounded WAL growth).
 const path = require('path');
+const fs = require('fs');
 const { Worker } = require('worker_threads');
 const config = require('../config');
 
@@ -29,6 +30,8 @@ function spawnWorker() {
       intervalMs: config.walCheckpointIntervalMs,
       highWaterBytes: config.walCheckpointHighWaterMB * 1024 * 1024,
       starvationRuns: config.walCheckpointStarvationRuns,
+      starvationFloorBytes: config.walCheckpointStarvationFloorMB * 1024 * 1024,   // #240
+      escalateCooldownMs: config.walCheckpointEscalateCooldownMs,                  // #240
     },
   });
   w.on('message', (m) => { if (m && m.log) console.log('[wal-checkpoint] ' + m.log); });
@@ -73,12 +76,31 @@ function scheduleRespawn() {
 
 // Degraded-but-safe: re-arm a conservative inline autocheckpoint on the MAIN connection so
 // the WAL can never grow unbounded, and reclaim the backlog the dead worker left behind.
-function engageFallback() {
+function engageFallback(reason) {
   if (fallbackEngaged) return;
   fallbackEngaged = true;
   try { mainDb.pragma(`wal_autocheckpoint = ${config.walCheckpointFallbackPages}`); } catch (_) {}
-  try { mainDb.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) {}   // one-time reclaim of the dead-worker backlog
-  console.error('[wal-checkpoint] worker unrecoverable — re-enabled inline autocheckpoint as fallback');
+  // #240: reclaim the dead worker's backlog, but pick the CHEAPEST form that does the job.
+  // The old unconditional TRUNCATE ran a blocking, fsync-heavy checkpoint on the MAIN
+  // thread — on slow storage a single multi-second loop stall, and one that only ever
+  // happens on a degraded server that can least afford it. PASSIVE reclaims what it can
+  // without blocking; the blocking form is reserved for a WAL that is genuinely over the
+  // high-water mark, where leaving it is the worse of the two risks.
+  const over = walBytes() > config.walCheckpointHighWaterMB * 1024 * 1024;
+  try { mainDb.pragma(`wal_checkpoint(${over ? 'TRUNCATE' : 'PASSIVE'})`); } catch (_) {}
+  console.error(`[wal-checkpoint] ${reason || 'worker unrecoverable'} — re-enabled inline autocheckpoint as fallback (backlog reclaim: ${over ? 'TRUNCATE' : 'PASSIVE'})`);
+}
+
+// #240: the fallback is STICKY for the life of the process — once engaged, checkpoints are
+// back on the main thread until a restart. That is exactly the shape of "it degrades with
+// uptime and a restart fixes it", so it must be visible on /api/status rather than inferable
+// only from a log line that may have rolled.
+function getCheckpointerState() {
+  return { worker: !!worker, fallbackEngaged, respawns: respawnAt.length, walBytes: walBytes() };
+}
+
+function walBytes() {
+  try { return mainDbPath ? fs.statSync(mainDbPath + '-wal').size : 0; } catch (_) { return 0; }
 }
 
 // Call ONCE at boot, after the DB is open + migrated. `db` is the main connection (used to
@@ -98,8 +120,39 @@ function startWalCheckpointer(db, dbPath) {
   // wal_autocheckpoint, so this still works at 0). Also reclaims any WAL a prior crash left.
   try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) { /* best-effort */ }
 
-  worker = spawnWorker();
-  console.log(`[wal-checkpoint] off-thread checkpointer started (every ${config.walCheckpointIntervalMs}ms; escalate >${config.walCheckpointHighWaterMB}MB or ${config.walCheckpointStarvationRuns} growing runs; respawn max ${config.walCheckpointRespawnMax}/${config.walCheckpointRespawnWindowMs}ms)`);
+  /*
+   * The worker may not be constructible AT ALL on some hosts.
+   *
+   * The respawn path below already catches a failed spawn, but this first one did not - and a
+   * throw here escapes startWalCheckpointer and takes the whole server down at boot:
+   *
+   *     Failed to construct 'Worker': The V8 platform used by this instance of Node does not
+   *     support creating Workers
+   *
+   * That is what an roHtmlWidget does: it is a Node context inside a renderer, and the renderer's
+   * V8 platform has no worker threads. The module already knows how to run without one -
+   * engageFallback() re-arms a conservative inline autocheckpoint - so the correct behaviour is
+   * to degrade into it rather than refuse to start. A checkpointer that cannot get a thread is a
+   * slower server; a checkpointer that throws is no server.
+   */
+  try {
+    worker = spawnWorker();
+  } catch (e) {
+    engageFallback(`worker threads unavailable on this platform (${e && e.message})`);
+    return null;
+  }
+
+  // #240: this line is where an operator learns the escalation policy, so it must state ALL of
+  // it. It advertised only "3 growing runs" after the size floor and the cooldown were added,
+  // which is the half that no longer holds on its own — and reading it during an incident would
+  // send you looking for a checkpoint that the gates had in fact suppressed.
+  console.log(
+    `[wal-checkpoint] off-thread checkpointer started (PASSIVE every ${config.walCheckpointIntervalMs}ms; ` +
+    `blocking TRUNCATE when the WAL exceeds ${config.walCheckpointHighWaterMB}MB, ` +
+    `or after ${config.walCheckpointStarvationRuns} growing runs but only at >=${config.walCheckpointStarvationFloorMB}MB ` +
+    `and at most once per ${Math.round(config.walCheckpointEscalateCooldownMs / 1000)}s; ` +
+    `respawn max ${config.walCheckpointRespawnMax}/${config.walCheckpointRespawnWindowMs}ms)`
+  );
   return worker;
 }
 
@@ -115,4 +168,4 @@ async function stopWalCheckpointer() {
   try { await w.terminate(); } catch (_) {}
 }
 
-module.exports = { startWalCheckpointer, stopWalCheckpointer, _getWorker: () => worker };
+module.exports = { startWalCheckpointer, stopWalCheckpointer, getCheckpointerState, _getWorker: () => worker };

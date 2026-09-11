@@ -21,7 +21,7 @@ function formatResourceCount(n, keyBase, zeroKey) {
 function adminIconsHtml(w) {
   if (!w.can_admin) return '';
   return `
-    <button class="workspace-switcher-members" type="button" data-members-id="${esc(w.id)}" aria-label="Manage members" title="Manage members">
+    <button class="workspace-switcher-members" type="button" data-members-id="${esc(w.id)}" aria-label="${t('switcher.manage_members')}" title="${t('switcher.manage_members')}">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
         <circle cx="9" cy="7" r="4"/>
@@ -29,11 +29,59 @@ function adminIconsHtml(w) {
         <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
       </svg>
     </button>
-    <button class="workspace-switcher-pencil" type="button" data-rename-id="${esc(w.id)}" aria-label="Rename workspace" title="Rename">
+    <button class="workspace-switcher-pencil" type="button" data-rename-id="${esc(w.id)}" aria-label="${t('switcher.rename')}" title="${t('switcher.rename')}">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
       </svg>
     </button>`;
+}
+
+/*
+ * May this person create a workspace?
+ *
+ * ⚠️ NOT `can_admin`. That flag is true for a workspace_admin too, and creating a SIBLING workspace
+ * is an organization-level act — a delegated admin handed one workspace must not be able to grow
+ * the tenant around it. The server enforces exactly this; the button only mirrors it, so that a
+ * button which is visible is a button that works.
+ */
+function canCreateWorkspace(me) {
+  if (!me) return false;
+  if (me.is_platform_admin) return true;
+  return me.current_org_role === 'org_owner' || me.current_org_role === 'org_admin';
+}
+
+/*
+ * The "New workspace" control, rendered UNDER the selector in both views.
+ *
+ * ⚠️ NOT INSIDE THE DROPDOWN. It lived there first and was wrong twice over: it is an action, not
+ * one of the things you are choosing between, so it read as a workspace you could switch to — and
+ * it was only reachable by opening a menu, which is no use at all in the single-workspace case
+ * where the menu does not exist. Under the selector it is in one predictable place whether you
+ * have one workspace or twenty.
+ *
+ * Returns '' when the caller may not create, so both views can call it unconditionally.
+ */
+function createButtonHtml(me) {
+  if (!canCreateWorkspace(me)) return '';
+  return `
+    <button class="workspace-switcher-create" type="button" data-create-workspace>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+      </svg>
+      <span>${t('switcher.create_title')}</span>
+    </button>`;
+}
+
+/** Wire every create affordance inside `scope`. Safe to call when there are none. */
+function wireCreateButtons(scope) {
+  scope.querySelectorAll('[data-create-workspace]').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();          // never let it also trigger a row's switch handler
+      scope.classList.remove('open');
+      const { openWorkspaceCreateModal } = await import('./workspace-create-modal.js');
+      openWorkspaceCreateModal();
+    });
+  });
 }
 
 // Wire the manage-members + rename buttons within `scope`. `list` resolves a
@@ -64,12 +112,69 @@ function wireAdminIcons(scope, list) {
 //   - 0 accessible workspaces: muted "No workspace" placeholder
 //   - 1 accessible workspace: workspace name as static text
 //   - >1 accessible workspaces: dropdown button + menu with click-to-switch
-export function renderWorkspaceSwitcher(me) {
+/*
+ * ⚠️ REMOTE ORGS APPEAR HERE ALONGSIDE LOCAL ONES, which reverses an earlier decision worth
+ * recording rather than quietly overwriting.
+ *
+ * The old position: remote workspaces must never enter this switcher, because switching mints a JWT
+ * with current_workspace_id and reloads — it assumes a LOCAL, WRITABLE workspace — so every write
+ * surface would grow a disabled state, and a UI full of dead controls teaches people the product is
+ * broken.
+ *
+ * What changed is not the risk but the destination: writes against a remote org will be relayed to
+ * the server that owns it over the link that already exists. Once the controls work, keeping the
+ * org out of the switcher is the arbitrary choice, and making an operator go to a different screen
+ * to look at one customer instead of another is the thing that actually feels broken.
+ *
+ * ⚠️ SELECTING ONE DOES NOT MINT A JWT. There is no local workspace row to put in a token. The
+ * selection is a client-side mode, stored here and read by the views; the token keeps pointing at
+ * whatever local workspace it did. That also means signing out or expiring cannot strand somebody
+ * "inside" a server they no longer have access to.
+ */
+export const REMOTE_ORG_KEY = 'st_remote_org';
+
+export function selectedRemoteOrg() {
+  try { return JSON.parse(localStorage.getItem(REMOTE_ORG_KEY) || 'null'); } catch (e) { return null; }
+}
+
+export function clearRemoteOrg() {
+  localStorage.removeItem(REMOTE_ORG_KEY);
+}
+
+export function renderWorkspaceSwitcher(me, remoteOrgs = []) {
   const container = document.getElementById('workspaceSwitcher');
   if (!container) return;
 
-  const list = Array.isArray(me?.accessible_workspaces) ? me.accessible_workspaces : [];
-  const currentId = me?.current_workspace_id || null;
+  const local = Array.isArray(me?.accessible_workspaces) ? me.accessible_workspaces : [];
+  /*
+   * ⚠️ KEYED ON SERVER **AND** WORKSPACE. A remote server may hold several customers, and two
+   * servers will eventually hand us the same workspace id — nothing coordinates them. Keying on the
+   * workspace alone would merge two customers into one row, which is the worst available bug here.
+   */
+  const remote = (remoteOrgs || []).map((o) => ({
+    id: `remote:${o.nodeId}:${o.workspaceId || ''}`,
+    name: o.name,
+    remote: true,
+    nodeId: o.nodeId,
+    workspaceId: o.workspaceId || null,
+    stale: !!o.stale,
+    writable: !!o.writable,
+    device_count: o.deviceCount,
+    /*
+     * ⚠️ The SERVER'S NAME, not the words "another server". Every remote row was subtitled the same
+     * way, which distinguishes none of them — and an MSP switching between customers is choosing
+     * among rows that all looked alike. The name is declared by the peer at pairing. Where the
+     * remote org has its own organisation name too, both appear: "Acme Retail · Acme HQ Server"
+     * answers "which customer" and "on which box" in one line.
+     */
+    organization_name: [o.organizationName, o.serverName || `server ${String(o.nodeId).slice(0, 8)}`]
+      .filter(Boolean).join(' · ') + (o.stale ? ' · not reachable' : ''),
+  }));
+  const list = [...local, ...remote];
+  const picked = selectedRemoteOrg();
+  const currentId = picked
+    ? `remote:${picked.nodeId}:${picked.workspaceId || ''}`
+    : (me?.current_workspace_id || null);
 
   if (list.length === 0) {
     container.classList.remove('open');
@@ -87,8 +192,10 @@ export function renderWorkspaceSwitcher(me) {
       <div class="workspace-switcher-single">
         <span class="workspace-switcher-static">${esc(only.name)}</span>
         ${adminIconsHtml(only)}
-      </div>`;
+      </div>
+      ${createButtonHtml(me)}`;
     wireAdminIcons(container, [only]);
+    wireCreateButtons(container);
     return;
   }
 
@@ -130,7 +237,10 @@ export function renderWorkspaceSwitcher(me) {
             <polyline points="20 6 9 17 4 12"/>
           </svg>
           <div class="ws-meta">
-            <div class="ws-name">${esc(w.name)}</div>
+            <div class="ws-name">${esc(w.name)}${w.remote
+              // ⚠️ Marked, always. An operator acting on the wrong customer's screens because two
+              // rows looked identical is the failure this one character prevents.
+              ? ' <span class="badge" style="font-size:9px;vertical-align:middle">remote</span>' : ''}</div>
             <div class="ws-org">${subtitle}</div>
           </div>
           ${adminIconsHtml(w)}
@@ -139,6 +249,7 @@ export function renderWorkspaceSwitcher(me) {
       }).join('')}
       <div class="workspace-switcher-noresults" style="display:none">${t('switcher.no_matches')}</div>
     </div>
+    ${createButtonHtml(me)}
   `;
 
   const button = container.querySelector('.workspace-switcher-button');
@@ -147,6 +258,39 @@ export function renderWorkspaceSwitcher(me) {
   // Shared switch action (used by click and keyboard Enter).
   async function switchTo(wsId) {
     if (wsId === currentId) { container.classList.remove('open'); return; }
+
+    /*
+     * ⚠️ A remote org is a client-side mode, not a token change. There is no local workspace row to
+     * name in a JWT, and inventing one would put a workspace id in a token that resolves to nothing
+     * on this server — which fails later, somewhere else, as a permissions error nobody can explain.
+     */
+    if (String(wsId).startsWith('remote:')) {
+      const org = (remoteOrgs || []).find(
+        (o) => `remote:${o.nodeId}:${o.workspaceId || ''}` === wsId);
+      if (!org) return;
+      localStorage.setItem(REMOTE_ORG_KEY, JSON.stringify(org));
+      window.location.reload();
+      return;
+    }
+    /*
+     * ⚠️ LEAVING A REMOTE ORG IS NOT ALWAYS A WORKSPACE SWITCH, and treating it as one broke the
+     * dropdown. While a remote org is selected, `currentId` is `remote:…`, so picking your own
+     * workspace looked like a change — but the JWT was already pointing at it, so this asked the
+     * server to switch to the workspace it was already on. That call does not return a new token,
+     * and the click did nothing at all: the local workspace became unselectable for as long as a
+     * remote org was active.
+     *
+     * Dropping the mode IS the whole action in that case. The order matters too: clear before the
+     * reload, or the local workspace renders under the remote banner and an operator is looking at
+     * their own data labelled as somebody else's.
+     */
+    const wasRemote = !!picked;
+    clearRemoteOrg();
+    if (wasRemote && wsId === (me?.current_workspace_id)) {
+      window.location.reload();
+      return;
+    }
+
     try {
       const resp = await api.switchWorkspace(wsId);
       if (resp?.token) {
@@ -161,6 +305,14 @@ export function renderWorkspaceSwitcher(me) {
   }
 
   // ---- type-to-filter + keyboard navigation (only when the search box renders) ----
+  /*
+   * ⚠️ EVERY .workspace-switcher-item MUST CARRY data-search AND data-workspace-id. applyFilter
+   * reads `it.dataset.search` — an item without it makes `undefined.includes` THROW on the first
+   * keystroke in the search box, killing the filter for every real workspace — and the keyboard
+   * Enter path calls switchTo(dataset.workspaceId). That is why "New workspace" is a control under
+   * the selector rather than a row in here: it is an action, not one of the things being chosen
+   * between, and it belongs to neither list.
+   */
   const allItems = Array.from(container.querySelectorAll('.workspace-switcher-item'));
   const noResults = container.querySelector('.workspace-switcher-noresults');
   let highlightIdx = -1;
@@ -229,6 +381,7 @@ export function renderWorkspaceSwitcher(me) {
       switchTo(item.dataset.workspaceId);
     });
   });
+  wireCreateButtons(container);
 
   // Click-outside closes the menu.
   document.addEventListener('click', (e) => {

@@ -15,7 +15,7 @@
   // packaged config.xml via the Tizen application API; fall back to a constant that
   // build-wgt.sh stamps from config.xml's version="" so the dashboard always shows the
   // version that is actually installed (never the old hardcoded '1.0.0').
-  var APP_VERSION_FALLBACK = '1.9.5'; // st:app-version — stamped by build-wgt.sh
+  var APP_VERSION_FALLBACK = '1.9.29'; // st:app-version — stamped by build-wgt.sh
   var APP_VERSION = (function () {
     try {
       var v = tizen.application.getCurrentApplication().appInfo.version;
@@ -315,6 +315,7 @@
       set(LS.id, deviceId); set(LS.token, deviceToken);
       authenticated = true; // #118: this socket may now send post-register events
       clearToast();         // #118: drop any stale "Not authenticated…" banner
+      flushOfflinePlays();  // #299: authenticated, so any offline backlog can be replayed
       // feat/offline-cause-log: reconnected after an in-session disconnect -> report the gap length +
       // whether the local link dropped. cold_start:false because the app SURVIVED the gap (a reboot
       // would have lost this in-process state). Browser has no SSID/RSSI to add.
@@ -388,6 +389,12 @@
       // independent of (and in addition to) the panel API.
       if (type === 'screen_on' || type === 'launch') { clearScreenOff(); keepAwake(); }
 
+      // Volume is handled here, not in STDeviceControl: it is not a Samsung fleet-control action
+      // and it must work on EVERY build, not only a partner-signed panel. Previously it fell
+      // through to STDeviceControl's default case and was answered "unknown command" — the
+      // dashboard slider did nothing on Tizen at all.
+      if (type === 'set_volume') { applyVolume(payload); return; }
+
       if (!window.STDeviceControl) { reportCmd('error', type, 'device-control unavailable'); return; }
       STDeviceControl.run(type, payload).then(function (res) {
         var note = res.note;
@@ -409,6 +416,48 @@
     socket.on('device:screenshot-request', function () { captureAndSend(); });
     socket.on('device:remote-start', function () { startStreaming(); });
     socket.on('device:remote-stop', function () { stopStreaming(); });
+
+    // Dashboard remote control (parity with the web player) — touch injection + D-pad/volume/mute keys
+    // + real-time per-item mute. All wrapped so a malformed payload can never wedge the socket.
+    socket.on('device:remote-touch', function (data) {
+      try {
+        if (!data) return;
+        var x = (data.x || 0) * elStage.offsetWidth, y = (data.y || 0) * elStage.offsetHeight;
+        var el = document.elementFromPoint(x, y);
+        if (el && el.click) el.click();
+      } catch (e) {}
+    });
+    socket.on('device:remote-key', function (data) {
+      try {
+        if (!data) return;
+        var v = player.getCurrentVideo();
+        var n = player.getItemCount();
+        switch (data.keycode) {
+          case 'KEYCODE_DPAD_RIGHT': player.advance(); break;
+          case 'KEYCODE_DPAD_LEFT':  if (n > 0) player.gotoIndex((player.getIndex() - 1 + n) % n); break;
+          case 'KEYCODE_DPAD_CENTER':
+          case 'KEYCODE_ENTER':      if (v) { if (v.paused) v.play(); else v.pause(); } break;
+          case 'KEYCODE_VOLUME_UP':  if (v && !player.isWallFollower()) { v.volume = Math.min(1, v.volume + 0.1); v.muted = false; } break;
+          case 'KEYCODE_VOLUME_DOWN': if (v) { v.volume = Math.max(0, v.volume - 0.1); } break;
+          case 'KEYCODE_MENU':       if (v && !(player.isWallFollower() && v.muted)) { v.muted = !v.muted; } break;
+          case 'KEYCODE_HOME':       if (n > 0) player.gotoIndex(0); break;
+          case 'KEYCODE_BACK':       toggleInfoOverlay(); break;
+          case 'KEYCODE_POWER':      if (document.getElementById('screenOffOverlay')) clearScreenOff(); else showScreenOff(); break;
+        }
+      } catch (e) {}
+    });
+    // #129 real-time per-item mute — apply immediately if the toggled item is the one on screen now.
+    socket.on('device:mute-changed', function (data) {
+      try {
+        var item = player.getCurrentItem();
+        var v = player.getCurrentVideo();
+        if (!data || !item || !data.content_id || item.content_id !== data.content_id) return;
+        // `v` is null for a YouTube item — it is an iframe, not a <video> — so this handler did
+        // nothing at all for the one content type people most often want muted.
+        if (v) { v.muted = !!data.muted; return; }
+        if (item.mime_type === 'video/youtube') player.setYouTubeMuted(!!data.muted);
+      } catch (e) {}
+    });
 
     // ---- video wall sync (mirrors the web player) ----
     // Leader broadcasts position; followers align index + drift-correct their video.
@@ -435,6 +484,12 @@
     msg.client_version = APP_VERSION;             // config.xml version (stamped by build-wgt.sh)
     msg.platform = 'Tizen ' + (tizenVersion() || '');
     msg.contract_version = 'v4';
+    // What this player can ACTUALLY do, probed at runtime (js/capabilities.js). The dashboard hides
+    // every control we do not declare, so a Tizen panel stops showing buttons for things the
+    // platform cannot honour. Omitted entirely if the module failed to load: the server then falls
+    // back to its per-platform baseline, which is the right behaviour for an older .wgt and much
+    // better than declaring an empty set, which would read as "supports nothing".
+    try { if (window.STCapabilities) msg.capabilities = STCapabilities.detect(); } catch (e) {}
     if (deviceId && deviceToken) { msg.device_id = deviceId; msg.device_token = deviceToken; }
     else { msg.pairing_code = pairingCode(); }
     socket.emit('device:register', msg);
@@ -466,16 +521,130 @@
   // ---- remote control + dashboard preview (#120 / #121) ----
   // Screen on/off uses a black overlay (a sideloaded web app can't power the panel
   // off cleanly), mirroring the web player.
+  // Volume, 0-100 from the dashboard.
+  //
+  // Prefers tizen.tvaudiocontrol — that is the TV's OWN volume, so it applies to whatever is
+  // playing including AVPlay video, which lives on a hardware plane the media elements know
+  // nothing about. Setting el.volume alone would leave portrait video at full blast.
+  //
+  // Falls back to the media elements where the TV profile is absent (URL-Launcher / browser
+  // context), and remembers the level so items mounted LATER inherit it — media elements are
+  // created per item, so a one-shot set would last only until the playlist advanced.
+  var mediaVolume = null;   // 0..1, null = never set
+
+  /*
+   * ⚠️ THE WIRE FORMAT IS `level`, AND IT IS A 0..1 FRACTION.
+   *
+   * That is what the dashboard sends — `sendCommand(id, 'set_volume', { level: value / 100 })` in
+   * frontend/js/views/device-detail.js — and what the Android player reads (`optDouble("level")`).
+   * This handler looked for `value`/`volume` as a 0..100 percentage, so it matched nothing the
+   * dashboard has ever sent: every slider move reported "no usable value in payload" and changed
+   * nothing, while the panel declared audio.volume as a working capability.
+   *
+   * Both halves had to move together, and that is the trap. Accepting `level` while still treating
+   * it as a percentage turns a request for 50% into 0.5% — inaudible, indistinguishable from broken,
+   * and it would have looked exactly like a fix.
+   */
+  function applyVolume(payload) {
+    var pct;
+    if (payload && payload.level !== undefined && isFinite(Number(payload.level))) {
+      pct = Number(payload.level) * 100;                 // the canonical wire form: a fraction
+    } else if (payload && payload.value !== undefined) {
+      pct = payload.value;                               // legacy/hand-issued: already a percentage
+    } else if (payload) {
+      pct = payload.volume;
+    }
+    var n = Number(pct);
+    if (!isFinite(n)) { reportCmd('warn', 'set_volume', 'no usable value in payload'); return; }
+    n = Math.max(0, Math.min(100, n));
+    mediaVolume = n / 100;
+
+    var tv = null;
+    try { tv = window.STCapabilities ? STCapabilities.tvAudio() : null; } catch (e) {}
+    if (tv) {
+      try {
+        tv.setVolume(Math.round(n));
+        reportCmd('info', 'set_volume', 'TV volume set to ' + Math.round(n) + '% (tvaudiocontrol)');
+        return;
+      } catch (e) {
+        // Fall through to the media elements rather than reporting success for nothing.
+        reportCmd('warn', 'set_volume', 'tvaudiocontrol refused (' + (e && e.message ? e.message : e) + ') — using media volume');
+      }
+    }
+    applyMediaVolume();
+    reportCmd('info', 'set_volume', 'media volume set to ' + Math.round(n) + '%');
+  }
+  function applyMediaVolume() {
+    if (mediaVolume === null) return;
+    try {
+      var els = document.querySelectorAll('video, audio');
+      for (var i = 0; i < els.length; i++) {
+        try { els[i].volume = mediaVolume; } catch (e) {}
+      }
+    } catch (e) {}
+  }
+  // Media elements are created per item across several render paths, so re-apply on every 'play'.
+  // Captured, because media events do not bubble.
+  try {
+    document.addEventListener('play', function () { applyMediaVolume(); }, true);
+  } catch (e) {}
+
+  // Blanking has to reach the HARDWARE PLANE, not just the DOM.
+  //
+  // A z-index overlay covers the web layer only. Portrait/flipped video runs through AVPlay
+  // (#170), which composites on a separate hardware plane the DOM cannot draw over — so on a
+  // portrait panel the old overlay went up and the video kept playing straight through it. The
+  // screen never went dark, which is the whole point of the command. Tearing the AVPlay session
+  // down is what actually blanks it; the same trap bit the BrightSign port from the other side.
+  //
+  // Landscape <video> is paused too: cheap, and it stops audio continuing behind a black screen.
   function showScreenOff() {
-    if (document.getElementById('screenOffOverlay')) return;
-    var o = document.createElement('div');
-    o.id = 'screenOffOverlay';
-    o.style.cssText = 'position:fixed;inset:0;background:#000;z-index:9999';
-    document.body.appendChild(o);
+    if (!document.getElementById('screenOffOverlay')) {
+      var o = document.createElement('div');
+      o.id = 'screenOffOverlay';
+      o.style.cssText = 'position:fixed;inset:0;background:#000;z-index:9999';
+      document.body.appendChild(o);
+    }
+    try { if (player && player.avActive && player.avStop) player.avStop(); } catch (e) {}
+    try {
+      var vids = document.querySelectorAll('video');
+      for (var i = 0; i < vids.length; i++) { try { vids[i].pause(); } catch (e2) {} }
+    } catch (e) {}
   }
   function clearScreenOff() {
     var o = document.getElementById('screenOffOverlay');
-    if (o && o.parentNode) o.parentNode.removeChild(o);
+    // Not blanked: nothing to restore, and re-mounting would restart the current item for no reason.
+    if (!o) return;
+    if (o.parentNode) o.parentNode.removeChild(o);
+    // A torn-down AVPlay session cannot be resumed, so re-mount the current item from scratch.
+    // playCurrent(), not gotoIndex(): gotoIndex early-returns when the index has not changed, so it
+    // would leave a blanked portrait panel dark after screen_on.
+    try { if (player && player.playCurrent) player.playCurrent(); } catch (e) {}
+  }
+  // Diagnostic info overlay (parity with the web player). Toggled by the dashboard remote BACK key —
+  // NOT the physical TV BACK (10009), which still exits to setup. A quick on-site troubleshooting panel.
+  function toggleInfoOverlay() {
+    var existing = document.getElementById('infoOverlay');
+    if (existing) { if (existing.parentNode) existing.parentNode.removeChild(existing); return; }
+    var item = (typeof player !== 'undefined' && player) ? player.getCurrentItem() : null;
+    var o = document.createElement('div');
+    o.id = 'infoOverlay';
+    o.style.cssText = 'position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,0.82);color:#e6e6e6;' +
+      'font:16px/1.7 sans-serif;padding:6vh 6vw;box-sizing:border-box';
+    function row(k, val) {
+      return '<div><span style="color:#8ab4f8;display:inline-block;min-width:210px">' + k + '</span>' +
+        (val == null || val === '' ? '—' : String(val)) + '</div>';
+    }
+    o.innerHTML = '<h2 style="margin:0 0 14px;color:#fff">ScreenTinker — Tizen Player</h2>' +
+      row('Device ID', deviceId) +
+      row('Server', serverUrl) +
+      row('App version', APP_VERSION) +
+      row('Connection', (socket && socket.connected) ? 'online' : 'offline') +
+      row('Orientation', (player && player.orientation) || 'landscape') +
+      row('Now playing', item ? (item.filename || item.widget_id || item.content_id) : 'idle') +
+      row('Playlist position', player ? ((player.getIndex() + 1) + ' / ' + player.getItemCount()) : '—') +
+      row('Screen', (screen.width + '×' + screen.height));
+    document.body.appendChild(o);
   }
   // #109: report PiP show/clear over the existing device:log channel (tag 'pip') so it
   // surfaces in the dashboard device log. Used as the PipOverlay log callback.
@@ -587,6 +756,78 @@
 
   // ---- playback ----
   var player = new PlaylistPlayer(elStage, function () { return serverUrl.replace(/\/+$/, ''); }, function () { return deviceId || ''; });
+  /* ===================== #299 offline proof-of-play =====================
+   * Playback here is offline-native; reporting was not. A play that happened while the socket was
+   * down was dropped at this hook and could never be recovered, so an outage left a permanent hole
+   * in play_logs. Now it is kept and replayed with its REAL times once the socket returns.
+   */
+  var OFFLINE_PLAY_KEY = 'st_offline_plays';
+  var offlinePlays = new OfflinePlayQueue();
+  var offlinePlayOpen = null;
+  var offlinePlayFlushing = false;
+  try { offlinePlays.restore(get(OFFLINE_PLAY_KEY)); } catch (e) {}
+  if (offlinePlays.size()) console.log('[play] offline backlog restored: ' + offlinePlays.size());
+
+  function persistOfflinePlays() {
+    // Storage failure must cost the backlog, never playback.
+    try { set(OFFLINE_PLAY_KEY, offlinePlays.serialize()); } catch (e) {}
+  }
+
+  function flushOfflinePlays() {
+    if (offlinePlayFlushing || !offlinePlays.size()) return;
+    if (!socket || !socket.connected || !deviceId) return;
+    var batch = offlinePlays.peekBatch();
+    if (!batch.length) return;
+    offlinePlayFlushing = true;
+    try {
+      socket.emit('device:play-event', { device_id: deviceId, event: 'play_offline', plays: batch });
+    } catch (e) { offlinePlayFlushing = false; return; }
+    /*
+     * Cleared only after the server has had its say — dropping at send time would turn a flush
+     * into a dead socket back into the same silent loss. A partly-rejected batch still clears, or
+     * one unusable entry would wedge everything behind it.
+     */
+    setTimeout(function () {
+      offlinePlays.ack(batch.map(function (p) { return p.client_event_id; }));
+      persistOfflinePlays();
+      offlinePlayFlushing = false;
+      if (offlinePlays.size()) flushOfflinePlays();
+    }, 4000);
+    console.log('[play] flushed ' + batch.length + ' offline plays, ' + offlinePlays.size() + ' queued');
+  }
+
+  // Proof-of-play: forward the player's device:play-event to the server (populates play_logs / Reports).
+  player.onPlayEvent = function (payload) {
+    try {
+      if (socket && socket.connected && deviceId) { socket.emit('device:play-event', payload); return; }
+      /*
+       * Offline. Remember the start; complete and queue it when the item is left. An end with no
+       * matching start is discarded rather than given an invented start time — a fabricated
+       * timestamp in a report is worse than a missing row.
+       */
+      if (!payload) return;
+      if (payload.event === 'play_start') {
+        offlinePlayOpen = {
+          content_id: payload.content_id || null,
+          widget_id: payload.widget_id || null,
+          content_name: payload.content_name || null,
+          started_at: Math.floor(Date.now() / 1000)
+        };
+      } else if (payload.event === 'play_end' && offlinePlayOpen) {
+        var open = offlinePlayOpen; offlinePlayOpen = null;
+        offlinePlays.add(OfflinePlayQueue.makePlay({
+          client_event_id: OfflinePlayQueue.newId(),
+          content_id: open.content_id,
+          widget_id: open.widget_id,
+          content_name: open.content_name,
+          started_at: open.started_at,
+          ended_at: Math.floor(Date.now() / 1000),
+          completed: !!payload.completed
+        }));
+        persistOfflinePlays();
+      }
+    } catch (e) {}
+  };
   // Multi-zone layout renderer (matches the Android player). app.js picks the renderer
   // per playlist-update from payload.layout; the two never run at once.
   var zoneRenderer = new ZoneRenderer(elStage, function () { return serverUrl.replace(/\/+$/, ''); }, function () { return deviceId || ''; });
@@ -613,6 +854,14 @@
   // Rotate the playback stage in software for portrait / flipped signage. Tizen TVs
   // are fixed-landscape, so we rotate the CONTENT (not the panel). Values mirror the
   // dashboard: landscape / portrait / landscape-flipped / portrait-flipped.
+  function mergeCustomShaders(map) {
+    if (!map || typeof map !== 'object' || !window.__TRANSITION_SHADERS) return;
+    for (var id in map) {
+      if (Object.prototype.hasOwnProperty.call(map, id) && typeof map[id] === 'string') {
+        window.__TRANSITION_SHADERS[id] = map[id];
+      }
+    }
+  }
   function applyOrientation(o) {
     // #109: apply the SAME transform to #stage AND #pip so the overlay's corner
     // positions track the visible CONTENT, not the physical panel, in every orientation.
@@ -645,6 +894,10 @@
       player.stop();
       zoneRenderer.clear();
       wallController.exit();
+      // #320: an operator's uploaded shaders ride in with the playlist, keyed by the ids the items
+      // reference. Tizen resolves a shader from the same global the web player does, so merging is
+      // the whole integration and the packaged .wgt needs no rebuild. Missing id -> hard cut, as before.
+      mergeCustomShaders(payload.custom_shaders);
       applyOrientation(payload.orientation || 'landscape');
       elStage.innerHTML = '<div class="card" style="position:relative"><h1>' +
         esc(payload.message || 'Display suspended') + '</h1><p class="sub">' +
@@ -656,6 +909,26 @@
     // A2: cache the last RENDERABLE payload so a reboot / WS-outage with no connectivity replays it
     // instead of showing the idle card. Only non-suspended payloads are cached.
     try { set(LS.payload, JSON.stringify(payload)); } catch (e) {}
+    // ...and cache the CONTENT the payload points at, which is the half that was missing. A playlist
+    // that survives an outage and media that does not just means the panel knows precisely what it
+    // cannot show. Deferred off the render path: the sweep is synchronous and this call arrives
+    // while the stage is being repainted.
+    // (The doubled braces this block used to carry were a templating artifact, not syntax: `{{ }}`
+    // parses as a block inside a block, so it ran correctly and read as a typo in eight places.)
+    try {
+      if (!window.__stMediaCache && window.MediaCache) window.__stMediaCache = window.MediaCache.create();
+      var mc = window.__stMediaCache;
+      if (mc && serverUrl) {
+        var mcItems = payload.assignments || [];
+        var mcBase = serverUrl.replace(/\/+$/, '');
+        setTimeout(function () {
+          mc.sync(mcItems, function (it) {
+            return mcBase + '/api/content/' + it.content_id + '/file'
+              + (it.content_rev ? '?rev=' + encodeURIComponent(it.content_rev) : '');
+          });
+        }, 2000);
+      }
+    } catch (e) { /* caching must never break the payload path */ }
     // If we have content + we're paired, make sure we're on the stage.
     if (elPairing.classList.contains('hidden') === false) show(elStage);
     else if (elStage.classList.contains('hidden')) show(elStage);
@@ -684,6 +957,10 @@
     else groupSync.exit();
     // #157: group-sync advances via its own tick, so suppress the solo deferred-rotation there.
     player.setScheduleDriven(!!payload.group_sync);
+    // #320: an operator's uploaded shaders ride in with the playlist, keyed by the ids the items
+    // reference. Tizen resolves a shader from the same global the web player does, so merging is
+    // the whole integration and the packaged .wgt needs no rebuild. Missing id -> hard cut, as before.
+    mergeCustomShaders(payload.custom_shaders);
     applyOrientation(payload.orientation || 'landscape');
     var layout = payload.layout;
     if (layout && Array.isArray(layout.zones) && layout.zones.length) { // B3: non-array zones would throw in zoneRenderer

@@ -8,9 +8,11 @@ import de from './i18n/de.js';
 import pt from './i18n/pt.js';
 import hi from './i18n/hi.js';
 import it from './i18n/it.js';
+import ja from './i18n/ja.js';
+import zh from './i18n/zh.js';
 
 const fallback = en;
-const registry = { en, es, fr, de, pt, hi, it };
+const registry = { en, es, fr, de, pt, hi, it, ja, zh };
 
 let currentLang = localStorage.getItem('rd_lang') || navigator.language?.split('-')[0] || 'en';
 if (!registry[currentLang]) currentLang = 'en';
@@ -22,9 +24,31 @@ function lookup(key) {
 // Replace {name} placeholders in a string with the matching property of vars.
 // Unknown placeholders pass through unchanged so a missing var is visible
 // during development rather than silently dropped.
+/*
+ * The white-label brand name, available to EVERY string without threading it through call sites.
+ *
+ * #292: a reseller's customers were shown "ScreenTinker" in a dozen places the white-label settings
+ * never touched — setup instructions, the empty-dashboard hint, onboarding, error text. Those are
+ * translated strings, so the fix belongs in the translation layer: they say {brandName} and this
+ * fills it in. Threading a variable through several hundred t() calls would have been the same fix
+ * with several hundred chances to miss one.
+ *
+ * Read at CALL time, not captured: branding.js refreshes from the server after first paint, and a
+ * value captured when this module loaded would keep showing the previous workspace's brand after a
+ * switch. The default is the product's own name, so an un-branded install reads exactly as before.
+ */
+function brandName() {
+  try {
+    const n = typeof window !== 'undefined' && window.__ST_BRAND_NAME;
+    return (typeof n === 'string' && n.trim()) ? n.trim() : 'SwiftDisplay';
+  } catch (e) { return 'SwiftDisplay'; }
+}
+
 function format(s, vars) {
-  if (!vars) return s;
-  return s.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
+  // Note there is no `if (!vars) return s` short-circuit any more: {brandName} has to resolve in
+  // strings that take no other variables, which is most of them.
+  const all = { brandName: brandName(), ...(vars || {}) };
+  return String(s).replace(/\{(\w+)\}/g, (m, k) => (k in all ? String(all[k]) : m));
 }
 
 export function t(key, vars) {
@@ -65,6 +89,8 @@ export function getLanguage() {
 export function getAvailableLanguages() {
   return [
     { code: 'en', name: 'English' },
+    { code: 'ja', name: '日本語' },
+    { code: 'zh', name: '简体中文' },
     { code: 'es', name: 'Español' },
     { code: 'fr', name: 'Français' },
     { code: 'it', name: 'Italiano' },

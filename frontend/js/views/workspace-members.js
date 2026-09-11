@@ -13,6 +13,7 @@ import { t } from '../i18n.js';
 import { showToast } from '../components/toast.js';
 import { openInviteMemberModal } from '../components/workspace-members-invite-modal.js';
 import { openAddUserModal } from '../components/workspace-members-add-user-modal.js';
+import { renderApprovalSettings } from '../components/approval-settings.js';
 
 export async function render(container, workspaceId) {
   container.innerHTML = `
@@ -115,9 +116,11 @@ export async function render(container, workspaceId) {
       emptyKey: 'members.empty.invites',
       rows: invites.map(inv => renderInviteRow(inv, { canAdmin })).join(''),
     }) : ''}
+    <div id="approvalSettingsCard"></div>
   `;
 
   if (canAdmin) attachMutationHandlers(container, workspaceId);
+  if (canAdmin) renderApprovalSettings(content.querySelector('#approvalSettingsCard'));
 }
 
 function renderSection({ titleKey, count, emptyKey, rows }) {
@@ -289,7 +292,7 @@ export function mapMutationError(err) {
 }
 
 function renderError(message) {
-  return `<div style="color:var(--danger);font-size:14px;padding:16px;background:var(--bg-input);border-radius:6px">${message}</div>`;
+  return `<div style="color:var(--danger);font-size:14px;padding:16px;background:var(--bg-input);border-radius:6px">${esc(message)}</div>`;
 }
 
 function formatDate(ts) {

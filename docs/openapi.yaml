@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: ScreenTinker Public API
-  version: 1.9.0
+  version: 2.0.8
   description: |
     Public, token-scoped REST API for ScreenTinker digital signage.
 
@@ -84,6 +84,145 @@ components:
         error:
           type: string
 
+    DeckDocument:
+      type: object
+      description: |
+        The editable source for a deck. Each slide carries a **template** (the view: element
+        geometry, style and motion, each with a `slot` name) and **fields** (the record: `{slot:
+        value}`). They are joined when the slide is rendered, which is what makes it possible to
+        come back and change a headline without rebuilding the layout.
+      properties:
+        slides:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                description: 'Unique within the deck — it is how a republish finds the widget it already made.'
+              name: { type: string, maxLength: 120 }
+              dwell_sec:
+                type: integer
+                minimum: 1
+                maximum: 3600
+                default: 10
+                description: |
+                  How long the slide stays up. A slide's motion has to finish inside this; if it
+                  does not, save and publish both return a `motion-outlives-dwell` warning naming
+                  the slide. Warned rather than refused.
+              widget_id:
+                type: [string, 'null']
+                description: 'Assigned by publish. Present so a republish updates rather than duplicates.'
+              template:
+                type: object
+                properties:
+                  background: { type: string, description: 'Hex colour. Anything else falls back to black.' }
+                  elements:
+                    type: array
+                    maxItems: 40
+                    items:
+                      type: object
+                      properties:
+                        slot: { type: string, description: 'The key this element reads from fields.' }
+                        kind: { type: string, enum: [head, body, stat, image, rule, box] }
+                        box:
+                          type: object
+                          properties:
+                            x: { type: number }
+                            y: { type: number }
+                            w: { type: number }
+                            h: { type: number }
+                        content_id: { type: [string, 'null'], description: 'For an image — a content row in this workspace.' }
+                        style:
+                          type: object
+                          properties:
+                            color: { type: string, description: 'Hex. Anything else falls back to white.' }
+                            font:
+                              type: string
+                              description: |
+                                A bundled family (`inter`, `archivo`, `oswald`, `bitter`,
+                                `jetbrains-mono`), an uploaded one (`u:<uuid>`), or one of the
+                                legacy generics (`sans`, `serif`, `mono`, `condensed`) which still
+                                resolve.
+                            size_cqw:
+                              type: number
+                              description: 'Relative to the screen, never pixels — so a slide scales from 720p to 4K.'
+                            weight: { type: integer, minimum: 100, maximum: 900 }
+                            align: { type: string, enum: [left, center, right] }
+                            opacity: { type: number, minimum: 0, maximum: 1 }
+                            radius_cqw: { type: number }
+                        motion:
+                          type: [object, 'null']
+                          description: 'Null means the element is simply present from the first frame.'
+                          properties:
+                            animation: { type: string, enum: [fade, slideL, slideR, slideU, slideD, zoom, wipe] }
+                            delay: { type: number, minimum: 0, maximum: 30 }
+                            duration: { type: number, minimum: 0.05, maximum: 10 }
+                            easing: { type: string, enum: [ease-out, ease-in, ease-in-out, linear, soft] }
+              fields:
+                type: object
+                description: 'The values, keyed by slot. Editing one of these does not touch the template.'
+                additionalProperties: { type: string }
+
+    TriggerInput:
+      type: object
+      required: [name, match_token, target_ref, mode]
+      properties:
+        name: { type: string, maxLength: 200 }
+        match_token:
+          type: string
+          description: |
+            The word that fires this trigger. Printable ASCII, no spaces, 1-64 characters — the UDP
+            payload is a single space-separated line (`ST1 <secret> <token>`), so a space would be
+            unparseable on arrival and a newline would let one datagram look like two messages.
+          pattern: '^[\x21-\x7E]{1,64}$'
+        clear_token:
+          type: [string, 'null']
+          description: Optional word that clears an `until_cleared` trigger. Same charset.
+          pattern: '^[\x21-\x7E]{1,64}$'
+        source_http: { type: boolean, default: true }
+        source_udp: { type: boolean, default: false }
+        target_kind:
+          type: string
+          enum: [playlist]
+          default: playlist
+          description: |
+            Only `playlist` is implemented. A URL target is designed and deliberately not built —
+            playlist items are library content and therefore pinnable for offline use, which is the
+            whole reason the target is a playlist.
+        target_ref:
+          type: string
+          description: |
+            A playlist id in this workspace. It must be published and every item must be pinnable
+            offline (no `remote_url`, no YouTube), both checked when you save.
+        mode:
+          type: string
+          enum: [once, until_cleared]
+        max_duration_sec: { type: integer, minimum: 0, maximum: 86400, default: 0 }
+        lease_sec:
+          type: [integer, 'null']
+          minimum: 5
+          maximum: 86400
+          description: |
+            For `until_cleared` only. A dead-man's timer: the overlay retires on its own if nothing
+            renews it, so a controller that dies mid-alarm cannot leave a screen stuck.
+        priority: { type: integer, minimum: -1000, maximum: 1000, default: 0 }
+        enabled: { type: boolean, default: true }
+        assignments:
+          type: array
+          description: Which screens this applies to. Every target must be in the same workspace.
+          items:
+            type: object
+            required: [target_type, target_id]
+            properties:
+              target_type: { type: string, enum: [device, group] }
+              target_id: { type: string }
+      description: |
+        Note on geometry: `position`, `width`, `height`, `opacity` and `border_radius` are accepted
+        and stored but are **not currently honoured** — every trigger renders fullscreen. They are
+        omitted here deliberately rather than documented as working.
+
     Device:
       type: object
       properties:
@@ -108,6 +247,70 @@ components:
           type: string
         created_at:
           type: integer
+
+        # --- Network addresses -------------------------------------------------------------
+        # Two different addresses, easy to confuse, so both are spelled out. They answer
+        # different questions and either can be null.
+        ip_address:
+          type: [string, "null"]
+          description: |
+            The device's **public (WAN)** address as observed by the server when the player
+            connected — i.e. what the internet sees. Behind a reverse proxy this is taken from
+            the first `X-Forwarded-For` entry, otherwise the socket peer address. Every device
+            on one site normally shares this. Null until the device has connected at least once.
+        local_ip:
+          type: [string, "null"]
+          description: |
+            The device's **own IPv4 address on its local network** (e.g. `192.168.1.42`), as
+            reported by the player itself. This is the one to use to reach a panel directly on
+            site. Null on players that do not report it, where the platform withholds it, or on
+            a panel with no IPv4 address at all — see `local_ip6`.
+        local_ip6:
+          type: [string, "null"]
+          description: |
+            The device's **own IPv6 address on its local network**, reported alongside
+            `local_ip` rather than instead of it: a dual-stack panel has both and either may be
+            the one you need. Link-local addresses (`fe80::/10`) are deliberately excluded —
+            every interface has one and none can be reached without also knowing the zone
+            index, so this carries a global or unique-local address or nothing. Null on players
+            that do not report it and on IPv4-only panels.
+
+        # --- Latest telemetry --------------------------------------------------------------
+        # Flattened from the most recent telemetry report. All null for a device that has
+        # never reported, and for platforms that cannot supply a given metric — treat every
+        # field here as optional rather than assuming a web player reports what Android does.
+        wifi_ssid:
+          type: [string, "null"]
+          description: |
+            Wi-Fi network name, or null on a wired/unknown connection.
+
+            Special value `"permission"` means the device is on Wi-Fi but the operating system
+            withheld the name — on Android 10+ reading the SSID requires a location permission
+            that ScreenTinker only asks for if an operator opts in. Treat `"permission"` as
+            "connected, name unavailable", not as a network literally called that.
+        wifi_rssi:
+          type: [integer, "null"]
+          description: Signal strength in dBm (negative; closer to zero is stronger).
+        battery_level:
+          type: [integer, "null"]
+          description: Battery percentage 0-100, or null on mains-powered hardware.
+        battery_charging:
+          type: [integer, "null"]
+          description: 1 charging, 0 not charging, null unknown.
+        storage_free_mb:
+          type: [integer, "null"]
+        storage_total_mb:
+          type: [integer, "null"]
+        ram_free_mb:
+          type: [integer, "null"]
+        ram_total_mb:
+          type: [integer, "null"]
+        cpu_usage:
+          type: [number, "null"]
+          description: Recent CPU utilisation as a percentage, where the platform exposes it.
+        uptime_seconds:
+          type: [integer, "null"]
+          description: Seconds since the device booted.
 
     Playlist:
       type: object
@@ -619,9 +822,55 @@ paths:
                 widget_id: { type: string }
                 zone_id: { type: string }
                 sort_order: { type: integer }
-                duration_sec: { type: integer }
+                duration_sec:
+                  type: integer
+                  description: >
+                    Omit to let the server choose: video content defaults to the clip's own
+                    length (rounded up to a whole second), anything else to 10s.
       responses:
         '201': { description: Created playlist item. }
+  /playlists/{id}/items/bulk:
+    post:
+      tags: [playlists]
+      summary: Add many content items to a playlist in one request
+      description: >-
+        Content only; widgets and child playlists are added one at a time via
+        /playlists/{id}/items. Items that cannot be added (missing, expired,
+        deactivated, or in another workspace) are reported in `skipped` rather
+        than failing the whole batch. Requires scope: write.
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content_ids]
+              properties:
+                content_ids:
+                  type: array
+                  maxItems: 500
+                  items: { type: string }
+                zone_id: { type: string, description: Optional zone placement for every item in the batch. }
+      responses:
+        '201':
+          description: At least one item was added.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  added: { type: array, items: { type: object } }
+                  skipped:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        content_id: { type: string }
+                        reason: { type: string }
+        '400': { description: Nothing could be added; `skipped` says why for each id. }
   /playlists/{id}/items/reorder:
     post:
       tags: [playlists]
@@ -761,7 +1010,11 @@ paths:
                 content_id: { type: string }
                 widget_id: { type: string }
                 zone_id: { type: string }
-                duration_sec: { type: integer }
+                duration_sec:
+                  type: integer
+                  description: >
+                    Omit to let the server choose: video content defaults to the clip's own
+                    length (rounded up to a whole second), anything else to 10s.
                 sort_order: { type: integer }
       responses:
         '201': { description: Created item. }
@@ -1188,7 +1441,11 @@ paths:
               required: [content_id]
               properties:
                 content_id: { type: string }
-                duration_sec: { type: integer }
+                duration_sec:
+                  type: integer
+                  description: >
+                    Omit to let the server choose: video content defaults to the clip's own
+                    length (rounded up to a whole second), anything else to 10s.
       responses:
         '200': { description: '{ success, devices_updated }.' }
   /groups/{id}/assign-playlist:
@@ -1231,10 +1488,340 @@ paths:
               properties:
                 type:
                   type: string
-                  enum: [screen_on, screen_off, launch, update, reboot, shutdown]
+                  # Kept identical to server/lib/device-command.js ALLOWED_COMMANDS, which both the
+                  # group and the single-device route validate against. openapi-contract.test.js
+                  # asserts the two lists match: this one had already drifted, documenting six of
+                  # the commands a 'full' token can actually send.
+                  enum: [screen_on, screen_off, launch, update, reboot, shutdown,
+                         power_menu, lock_now, kiosk_lock, kiosk_unlock,
+                         set_time, set_timezone, status_bar, block_uninstall, unblock_uninstall,
+                         shell, install_apk,
+                         set_volume, set_brightness, set_system_brightness, set_screen_timeout]
                 payload: { type: object }
       responses:
         '200': { description: '{ success, sent, offline, total, results }.' }
+
+  /devices/{id}/command:
+    post:
+      tags: [devices]
+      summary: Send an operational command to one screen
+      description: |
+        Sends reboot / shutdown / screen on/off / launch / update — and the device-owner and
+        system-control commands — to a single display. The group equivalent
+        (`POST /groups/{id}/command`) has existed far longer; this route did not, so commanding one
+        screen was reachable only over the dashboard's websocket and not over the API at all.
+
+        Requires scope: full (the highest scope; read and write tokens are rejected), the same as
+        the group route — a fleet-affecting action is not an ordinary write.
+
+        A panel that does not support the command is answered `400` with a `capability` field
+        naming what it lacks, rather than a generic failure: "this screen cannot do that" is
+        actionable and "failed" is not. The `status` in a success response says whether the panel
+        actually received it or the command was queued for a device that is currently offline.
+      x-required-scope: full
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type:
+                  type: string
+                  # Same list as the group route above; see the note there.
+                  enum: [screen_on, screen_off, launch, update, reboot, shutdown,
+                         power_menu, lock_now, kiosk_lock, kiosk_unlock,
+                         set_time, set_timezone, status_bar, block_uninstall, unblock_uninstall,
+                         shell, install_apk,
+                         set_volume, set_brightness, set_system_brightness, set_screen_timeout]
+                payload: { type: object }
+      responses:
+        '200':
+          description: '{ success, status, device_id }.'
+        '400':
+          description: |
+            Unknown command type, or the panel does not support it — in which case the body carries
+            `capability` naming the missing one.
+        '404': { description: No such device in this workspace. }
+        '503': { description: The realtime layer is not available. }
+
+  # --------------------------------------------------------------- slide decks
+  /slide-decks:
+    get:
+      tags: [slides]
+      summary: List the slide decks in this workspace
+      description: |
+        A deck is the editable source document for a set of slides. Publishing one emits a playlist
+        of slide widgets — so decks take no part in playback, and everything downstream
+        (scheduling, groups, device assignment) works on the playlist, not on this.
+      x-required-scope: read
+      responses:
+        '200': { description: 'An array of decks with slide counts and total duration.' }
+    post:
+      tags: [slides]
+      summary: Create a deck
+      x-required-scope: write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 120 }
+                doc: { $ref: '#/components/schemas/DeckDocument' }
+      responses:
+        '201': { description: 'The created deck, with any publish warnings.' }
+        '400': { description: 'A deck needs a name.' }
+
+  /slide-decks/{id}:
+    get:
+      tags: [slides]
+      summary: Fetch a deck document
+      x-required-scope: read
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 'The deck, its document, and its warnings.' }
+        '404': { description: 'No such deck in this workspace.' }
+    put:
+      tags: [slides]
+      summary: Save a deck document
+      description: |
+        Saving is **not** publishing — nothing reaches a screen until you publish. Warnings come
+        back on every save so an editor can show a problem while somebody works, rather than
+        refusing the change.
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 120 }
+                doc: { $ref: '#/components/schemas/DeckDocument' }
+      responses:
+        '200': { description: 'The saved deck.' }
+        '404': { description: 'No such deck in this workspace.' }
+    delete:
+      tags: [slides]
+      summary: Delete a deck document
+      description: |
+        **The published playlist and its widgets are kept.** By the time a deck has been published
+        what is on the wall is a playlist, possibly assigned to devices or on a schedule — deleting
+        the document must not take those down with it. Pass `with_published=1` to remove them too,
+        which still refuses to delete a widget another playlist is playing.
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - name: with_published
+          in: query
+          required: false
+          schema: { type: string, enum: ['1', 'true'] }
+          description: 'Also remove the slide widgets this deck published.'
+      responses:
+        '200': { description: '{ success, removed_widgets, playlist_kept }.' }
+        '404': { description: 'No such deck in this workspace.' }
+
+  /slide-decks/{id}/publish:
+    post:
+      tags: [slides]
+      summary: Publish a deck to a playlist of slide widgets
+      description: |
+        Creates or updates one slide widget per page and a playlist that orders them, then publishes
+        that playlist. Republishing updates the same widgets rather than making new ones, and a
+        slide removed from the deck has its widget deleted — unless another playlist still plays it,
+        in which case it is only unlinked.
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 'The deck, plus published.playlist_id, published.slides and published.removed.' }
+        '404': { description: 'No such deck in this workspace.' }
+        '500': { description: 'The deck could not be published.' }
+
+  # -------------------------------------------------------------- slide fonts
+  /fonts:
+    get:
+      tags: [slides]
+      summary: List the fonts uploaded to this workspace
+      description: |
+        Fonts an operator uploaded, for setting slides in a brand face. The five bundled families
+        are not listed here — they ship with the server and need no upload.
+      x-required-scope: read
+      responses:
+        '200': { description: 'An array of uploaded fonts.' }
+    post:
+      tags: [slides]
+      summary: Upload a font
+      description: |
+        Multipart, field name `font`. Accepts `.woff2`, `.woff`, `.ttf` and `.otf`, identified by
+        magic bytes rather than by filename, up to 12 MB.
+
+        The response `id` is what a slide stores in its element style, in the form `u:<uuid>`.
+
+        Two things worth knowing before uploading. **This server redistributes the file**: every
+        screen showing a slide in that face downloads it, from a URL that cannot be authenticated
+        (the slide renders in an opaque-origin iframe carrying no credentials) — so it is
+        unguessable rather than secret, the same property uploaded images already have. And
+        `licence_note` is recorded against the font and shown beside it, so the question of where a
+        face came from has an answer later.
+      x-required-scope: write
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [font]
+              properties:
+                font: { type: string, format: binary }
+                name: { type: string, maxLength: 80 }
+                licence_note: { type: string, maxLength: 300 }
+      responses:
+        '201': { description: 'The stored font, including the u:<uuid> a slide references it by.' }
+        '400': { description: 'Not a font, a TrueType Collection, empty, or over the size limit. The message says which.' }
+        '403': { description: 'No workspace context.' }
+
+  /fonts/{id}:
+    delete:
+      tags: [slides]
+      summary: Delete an uploaded font
+      description: |
+        Slides using it keep rendering — they fall back to the default bundled family, whose
+        `@font-face` is emitted alongside so the fallback actually loads. Takes the raw uuid, not
+        the `u:` form.
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: '{ success: true }.' }
+        '403': { description: 'That font belongs to another workspace.' }
+        '404': { description: 'No such font.' }
+
+  # ----------------------------------------------------------------- triggers
+  /triggers:
+    get:
+      tags: [triggers]
+      summary: List the triggers in this workspace
+      description: |
+        A trigger lets an external system interrupt a screen's playlist with different content, in
+        response to an event fired at the player over the LAN — an HTTP POST or a UDP datagram. It
+        is resolved entirely on the device, so it still works with the WAN down.
+      x-required-scope: read
+      responses:
+        '200': { description: 'An array of triggers, each with its `assignments`.' }
+    post:
+      tags: [triggers]
+      summary: Create a trigger
+      description: |
+        Requires scope: full. A trigger changes what a screen shows in response to a packet that is
+        not itself authenticated by this API, so it is a fleet-affecting capability rather than
+        ordinary content editing — the same tier as a reboot.
+
+        The target playlist must be **published** and every item in it must be locally pinnable
+        (no `remote_url`, no YouTube). Both are refused at save time rather than at fire time: a
+        trigger that saves cleanly and then renders nothing during an alarm is the failure this
+        feature exists to prevent.
+      x-required-scope: full
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TriggerInput' }
+      responses:
+        '200': { description: 'The created trigger, with its assignments.' }
+        '400':
+          description: |
+            Validation failed — an unusable token, an unpublished or empty target playlist, an item
+            that cannot be cached offline, or an assignment naming a device outside this workspace.
+            The message says which.
+
+  /triggers/{id}:
+    get:
+      tags: [triggers]
+      summary: Fetch one trigger
+      x-required-scope: read
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 'The trigger, with its assignments.' }
+        '404': { description: No such trigger in this workspace. }
+    put:
+      tags: [triggers]
+      summary: Update a trigger
+      description: 'Requires scope: full, and revalidates everything POST does.'
+      x-required-scope: full
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TriggerInput' }
+      responses:
+        '200': { description: The updated trigger. }
+        '400': { description: Validation failed; the message says which rule. }
+        '404': { description: No such trigger in this workspace. }
+    delete:
+      tags: [triggers]
+      summary: Delete a trigger
+      x-required-scope: full
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: '{ success: true }.' }
+        '404': { description: No such trigger in this workspace. }
+
+  /devices/{id}/trigger-config:
+    post:
+      tags: [triggers]
+      summary: Configure how one screen listens for triggers
+      description: |
+        Which transports a player accepts (`accept_http`, `accept_udp`), which ports it binds, and
+        the multicast group it joins. Ports must be 1024-65534 — below 1024 needs root on every
+        platform ScreenTinker runs on.
+      x-required-scope: full
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                accept_http: { type: boolean }
+                accept_udp: { type: boolean }
+                http_port: { type: [integer, 'null'], minimum: 1024, maximum: 65534 }
+                udp_port: { type: [integer, 'null'], minimum: 1024, maximum: 65534 }
+                multicast_group: { type: [string, 'null'] }
+      responses:
+        '200': { description: The updated trigger configuration for that device. }
+        '400': { description: 'A port outside 1024-65534, or an unusable multicast group.' }
+        '404': { description: No such device in this workspace. }
+
+  /devices/{id}/trigger-secret:
+    post:
+      tags: [triggers]
+      summary: Rotate or set the shared secret a screen requires
+      description: |
+        The secret an external system must present in the payload (`ST1 <secret> <token>`). The
+        response says whether the panel actually received the new value rather than implying it —
+        a screen that is offline when you rotate is still expecting the old one.
+      x-required-scope: full
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 'The secret, and whether the device was reached.' }
+        '404': { description: No such device in this workspace. }
 
   # ---------------------------------------------------------------------- pip
   /pip:
@@ -1506,7 +2093,18 @@ paths:
                       device_id: { type: string }
                       grid_col: { type: integer }
                       grid_row: { type: integer }
-                      rotation: { type: integer }
+                      rotation:
+                        type: integer
+                        enum: [0, 90, 180, 270]
+                        default: 0
+                        description: >-
+                          How this panel is physically mounted, as degrees CLOCKWISE that its image
+                          must be turned to come out upright on the wall (the same convention as a
+                          device's `orientation`). canvas_* are in WALL space — the wall as the
+                          audience sees it — so a portrait-mounted 1920x1080 panel is a tall tile
+                          with rotation 90, and content needs no pre-rotating. Anything other than
+                          0/90/180/270 is stored as 0. While a panel is in a wall this replaces its
+                          own `orientation`, so the two can never rotate the content twice.
                       canvas_x: { type: number }
                       canvas_y: { type: number }
                       canvas_width: { type: number }

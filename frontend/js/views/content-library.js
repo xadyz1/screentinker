@@ -1,7 +1,23 @@
-import { api } from '../api.js';
+import { api, assertLocalCallAllowed } from '../api.js';
+import * as gettingStarted from '../components/getting-started.js';
 import { showToast } from '../components/toast.js';
 import { esc, hydrateAuthImages } from '../utils.js';
 import { t } from '../i18n.js';
+import { openHistoryModal } from '../components/history-modal.js';
+import { renderApprovalBar } from '../components/approval-actions.js';
+
+/* The mime lib/html-bundle.js stamps on an uploaded HTML bundle. Kept as a constant rather than
+ * spelled out at each site: it is compared in three places here, and a typo in one of them is a
+ * card that renders an <img> pointed at a zip. */
+const BUNDLE_MIME = 'application/vnd.screentinker.bundle+zip';
+
+// #216: languages offered in the caption/subtitle pickers. Codes are BCP-47 primary tags —
+// enough for signage; extend as needed.
+const SUBTITLE_LANGS = [
+  ['en', 'English'], ['es', 'Español'], ['fr', 'Français'], ['de', 'Deutsch'],
+  ['pt', 'Português'], ['it', 'Italiano'], ['nl', 'Nederlands'], ['ja', '日本語'],
+  ['ko', '한국어'], ['zh', '中文'],
+];
 
 function formatFileSize(bytes) {
   if (!bytes) return '--';
@@ -43,6 +59,10 @@ export function render(container) {
       </div>
     </div>
 
+    <!-- The checklist follows the user here. Arriving from its "Add content" step and finding
+         nothing that mentions it is how someone loses the thread. -->
+    <div id="gettingStarted"></div>
+
     <div class="content-toolbar" style="display:flex;gap:16px;margin-bottom:24px">
       <div class="upload-area" id="uploadArea" style="flex:1;margin-bottom:0">
         <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -52,7 +72,7 @@ export function render(container) {
         </svg>
         <p>${t('content.drop')}</p>
         <p class="upload-hint">${t('content.upload_hint')}</p>
-        <input type="file" id="fileInput" style="display:none" multiple accept="video/*,image/*">
+        <input type="file" id="fileInput" style="display:none" multiple accept="video/*,image/*,audio/*,.zip,.wgt">
         <div class="upload-progress" id="uploadProgress" style="display:none">
           <div class="upload-progress-bar">
             <div class="upload-progress-fill" id="uploadProgressFill" style="width:0%"></div>
@@ -76,6 +96,8 @@ export function render(container) {
           <option value="video/webm">${t('content.mime.video_webm')}</option>
           <option value="image/jpeg">${t('content.mime.image_jpeg')}</option>
           <option value="image/png">${t('content.mime.image_png')}</option>
+          <option value="audio/mpeg">${t('content.mime.audio_mpeg')}</option>
+          <option value="audio/wav">${t('content.mime.audio_wav')}</option>
         </select>
         <button class="btn btn-primary" id="addRemoteBtn">${t('content.remote_add_btn')}</button>
       </div>
@@ -96,13 +118,29 @@ export function render(container) {
     </div>
 
     <div style="display:flex;gap:12px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
-      <input type="text" id="contentSearch" class="input" placeholder="${t('content.search_placeholder')}" style="max-width:250px;width:100%">
+      <input type="text" id="contentSearch" class="input" placeholder="${t('content.search_placeholder')}" style="max-width:250px;width:100%" value="${esc(state.search)}">
+      <select id="contentTypeFilter" class="input btn-sm" style="width:auto;background:var(--bg-input)">
+        <option value="all" ${state.type === 'all' ? 'selected' : ''}>${t('content.filter_type_all')}</option>
+        <option value="video" ${state.type === 'video' ? 'selected' : ''}>${t('content.filter_type_video')}</option>
+        <option value="image" ${state.type === 'image' ? 'selected' : ''}>${t('content.filter_type_image')}</option>
+        <option value="youtube" ${state.type === 'youtube' ? 'selected' : ''}>${t('content.filter_type_youtube')}</option>
+        <option value="web" ${state.type === 'web' ? 'selected' : ''}>${t('content.filter_type_web')}</option>
+        <option value="bundle" ${state.type === 'bundle' ? 'selected' : ''}>${t('content.filter_type_bundle')}</option>
+      </select>
+      <select id="contentSort" class="input btn-sm" style="width:auto;background:var(--bg-input)">
+        <option value="date_desc" ${state.sort === 'date_desc' ? 'selected' : ''}>${t('content.sort_newest')}</option>
+        <option value="date_asc" ${state.sort === 'date_asc' ? 'selected' : ''}>${t('content.sort_oldest')}</option>
+        <option value="name" ${state.sort === 'name' ? 'selected' : ''}>${t('content.sort_name')}</option>
+        <option value="size" ${state.sort === 'size' ? 'selected' : ''}>${t('content.sort_size')}</option>
+      </select>
+      <span id="contentResultCount" style="font-size:13px;color:var(--text-muted)"></span>
       <button class="btn btn-secondary btn-sm" id="newFolderBtn">${t('content.new_folder_btn')}</button>
       <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary);cursor:pointer;margin-left:auto">
         <input type="checkbox" id="showExpiredToggle" ${state.showExpired ? 'checked' : ''}> ${t('content.show_expired')}
       </label>
     </div>
     <div id="folderBreadcrumb" style="display:flex;gap:6px;align-items:center;margin-bottom:12px;font-size:13px;flex-wrap:wrap"></div>
+    <div id="batchToolbar" style="display:none"></div>
     <div id="folderGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:16px"></div>
     <div class="content-grid" id="contentGrid">
       <div class="empty-state" style="grid-column:1/-1"><h3>${t('common.loading')}</h3></div>
@@ -112,6 +150,21 @@ export function render(container) {
   // File upload handling
   const uploadArea = document.getElementById('uploadArea');
   const fileInput = document.getElementById('fileInput');
+
+  /*
+   * The checklist, if this account still has one. Fire-and-forget: it fetches devices and
+   * playlists (never content — the caller has none to give here and getContent is this page's own
+   * expensive call), and hides itself when there is nothing left to do.
+   */
+  gettingStarted.mount(document.getElementById('gettingStarted'), {
+    // Step 2 points at this page, so its button must DO something here rather than re-navigate to
+    // the page it is already on. Clicking the upload area is the page's own path to the file
+    // picker — and it stays inside the user's click, which is what the browser requires to open one.
+    onAction: (a) => {
+      if (a === 'add-content') { document.getElementById('uploadArea')?.click(); return true; }
+      return false;
+    },
+  }).catch(() => {});
 
   uploadArea.addEventListener('click', () => fileInput.click());
 
@@ -174,19 +227,17 @@ export function render(container) {
     }
   });
 
-  // Content search filters items currently shown in the grid.
-  function filterContent() {
-    const q = document.getElementById('contentSearch').value.toLowerCase();
-    document.querySelectorAll('.content-item').forEach(item => {
-      const name = item.querySelector('.content-item-name')?.textContent.toLowerCase() || '';
-      item.style.display = (!q || name.includes(q)) ? '' : 'none';
-    });
-    document.querySelectorAll('.folder-card').forEach(card => {
-      const name = card.dataset.name?.toLowerCase() || '';
-      card.style.display = (!q || name.includes(q)) ? '' : 'none';
-    });
-  }
-  document.getElementById('contentSearch').oninput = filterContent;
+  // #214: search/type/sort now query the server so results span the whole workspace,
+  // not just the items already rendered on the current page. Search is debounced to
+  // avoid a request per keystroke.
+  let searchTimer = null;
+  document.getElementById('contentSearch').oninput = (e) => {
+    clearTimeout(searchTimer);
+    const v = e.target.value;
+    searchTimer = setTimeout(() => { state.search = v.trim(); loadContent(); }, 300);
+  };
+  document.getElementById('contentTypeFilter').onchange = (e) => { state.type = e.target.value; loadContent(); };
+  document.getElementById('contentSort').onchange = (e) => { state.sort = e.target.value; loadContent(); };
 
   // #157: "Show expired" — reloads the grid including deactivated / past-expiry items so
   // they can be inspected and restored (clear/extend expiry in the edit modal).
@@ -215,27 +266,40 @@ const state = {
   currentFolderId: null, // null = root
   folders: [],           // all folders for this user (flat tree)
   showExpired: false,    // #157: include is_active=0 / past-expiry items in the library view
+  search: '',            // #214: server-side text search (spans the whole workspace)
+  type: 'all',           // #214: type filter — all | video | image | youtube | web
+  sort: 'date_desc',     // #214: sort order — date_desc | date_asc | name | size
+  selected: new Set(),   // #213: ids selected for batch operations (scoped to the current view)
+  lastClickedId: null,   // #213: anchor for shift-click range selection
 };
 
 async function handleFiles(files) {
+  const list = Array.from(files);
+  if (list.length === 0) return;
   const progress = document.getElementById('uploadProgress');
   const progressFill = document.getElementById('uploadProgressFill');
   const progressText = document.getElementById('uploadProgressText');
 
-  for (const file of files) {
-    progress.style.display = 'block';
-    progressFill.style.width = '0%';
-    progressText.textContent = t('content.upload_progress_named', { name: file.name });
+  // #212: send all selected files in a single request with aggregate progress, instead
+  // of one sequential XHR per file.
+  progress.style.display = 'block';
+  progressFill.style.width = '0%';
+  const label = list.length === 1 ? list[0].name : t('content.upload_progress_count', { count: list.length });
+  progressText.textContent = label;
 
-    try {
-      await api.uploadContent(file, (pct) => {
-        progressFill.style.width = pct + '%';
-        progressText.textContent = t('content.upload_progress_named_pct', { name: file.name, pct });
-      });
-      showToast(t('content.toast.uploaded_named', { name: file.name }), 'success');
-    } catch (err) {
-      showToast(t('content.toast.upload_failed_named', { name: file.name, error: err.message }), 'error');
-    }
+  try {
+    await api.uploadContent(list, (pct) => {
+      progressFill.style.width = pct + '%';
+      progressText.textContent = `${label} — ${pct}%`;
+    }, state.currentFolderId);
+    showToast(
+      list.length === 1
+        ? t('content.toast.uploaded_named', { name: list[0].name })
+        : t('content.toast.uploaded_count', { count: list.length }),
+      'success'
+    );
+  } catch (err) {
+    showToast(t('content.toast.upload_failed_named', { name: label, error: err.message }), 'error');
   }
 
   progress.style.display = 'none';
@@ -250,10 +314,22 @@ async function loadContent() {
 
   try {
     const [content, folders] = await Promise.all([
-      api.getContent(state.currentFolderId === null ? null : state.currentFolderId, state.showExpired),
+      api.getContent(state.currentFolderId === null ? null : state.currentFolderId, state.showExpired, {
+        q: state.search, type: state.type, sort: state.sort,
+      }),
       api.getFolders(),
     ]);
     state.folders = folders;
+
+    // #214: while a search or type filter is active, results span the whole workspace,
+    // so surface a count and note the folder scope no longer applies.
+    const countEl = document.getElementById('contentResultCount');
+    if (countEl) {
+      const filtering = state.search || (state.type && state.type !== 'all');
+      countEl.textContent = filtering
+        ? t('content.result_count', { count: content.length })
+        : '';
+    }
 
     // Breadcrumb path: walk parent_id chain from current folder up to root.
     const folderById = new Map(folders.map(f => [f.id, f]));
@@ -384,7 +460,10 @@ async function loadContent() {
     grid.innerHTML = content.map(c => {
       const exp = expiryInfo(c);
       return `
-      <div class="content-item" draggable="true" data-content-id="${c.id}" data-folder="${c.folder || ''}" style="${exp.expired ? 'opacity:.55' : ''}">
+      <div class="content-item" draggable="true" data-content-id="${c.id}" data-folder="${esc(c.folder || '')}" style="position:relative;${state.selected.has(c.id) ? 'outline:2px solid var(--primary,#3B82F6);outline-offset:-2px;' : ''}${exp.expired ? 'opacity:.55' : ''}">
+        <label class="content-select-wrap" style="position:absolute;top:6px;left:6px;z-index:2;background:rgba(0,0,0,.55);border-radius:4px;padding:3px;display:flex;cursor:pointer">
+          <input type="checkbox" class="content-select" data-content-id="${c.id}" ${state.selected.has(c.id) ? 'checked' : ''} style="width:16px;height:16px;margin:0;cursor:pointer">
+        </label>
         <div class="content-item-preview">
           ${c.mime_type === 'video/youtube'
             ? `<div style="position:relative;width:100%;height:100%;background:#000;display:flex;align-items:center;justify-content:center">
@@ -395,6 +474,14 @@ async function loadContent() {
                     <polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02" fill="white"/>
                   </svg>
                 </div>
+              </div>`
+          : c.mime_type === BUNDLE_MIME
+            ? `<div class="video-icon" style="flex-direction:column;gap:4px">
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                  <polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>
+                </svg>
+                <span style="font-size:10px;color:var(--text-muted)">${t('content.type_bundle_short')}</span>
               </div>`
           : c.remote_url
             ? `<div class="video-icon" style="flex-direction:column;gap:4px">
@@ -418,7 +505,7 @@ async function loadContent() {
         <div class="content-item-body">
           <div class="content-item-name" title="${esc(c.filename)}">${esc(c.filename)}</div>
           <div class="content-item-size">
-            ${c.mime_type === 'video/youtube' ? t('content.type_youtube') : c.remote_url ? t('content.type_remote') : (c.mime_type?.startsWith('video/') ? t('content.type_video') : t('content.type_image'))}
+            ${c.mime_type === 'video/youtube' ? t('content.type_youtube') : c.mime_type === BUNDLE_MIME ? t('content.type_bundle') : c.remote_url ? t('content.type_remote') : (c.mime_type?.startsWith('video/') ? t('content.type_video') : t('content.type_image'))}
             ${c.duration_sec ? ` &middot; ${Math.floor(c.duration_sec / 60)}:${String(Math.floor(c.duration_sec % 60)).padStart(2, '0')}` : ''}
             ${c.file_size ? ' &middot; ' + formatFileSize(c.file_size) : ''}
             ${c.width && c.height ? ` &middot; ${c.width}x${c.height}` : ''}
@@ -428,6 +515,7 @@ async function loadContent() {
             : (exp.dateLabel ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('content.expires_label', { date: exp.dateLabel })}</div>` : '')}
         </div>
         <div class="content-item-actions">
+          <button class="btn btn-secondary btn-sm" data-history-content="${c.id}" title="${t('history.button')}">${t('history.button')}</button>
           <button class="btn btn-secondary btn-sm" data-edit-content="${c.id}" title="${t('content.btn_edit')}">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
@@ -456,8 +544,40 @@ async function loadContent() {
       });
     });
 
+    // #213: selection checkboxes (with shift-click range). `content` is the current page's
+    // ordered list, so a range fills between the anchor and the clicked item.
+    grid.querySelectorAll('.content-select').forEach(cb => {
+      cb.addEventListener('click', (e) => {
+        const id = cb.dataset.contentId;
+        if (e.shiftKey && state.lastClickedId) {
+          const order = content.map(c => c.id);
+          const a = order.indexOf(state.lastClickedId);
+          const b = order.indexOf(id);
+          if (a !== -1 && b !== -1) {
+            const [lo, hi] = a < b ? [a, b] : [b, a];
+            const on = cb.checked; // apply the clicked box's new state across the range
+            for (let i = lo; i <= hi; i++) { if (on) state.selected.add(order[i]); else state.selected.delete(order[i]); }
+          }
+        } else if (cb.checked) {
+          state.selected.add(id);
+        } else {
+          state.selected.delete(id);
+        }
+        state.lastClickedId = id;
+        loadContent(); // re-render to reflect range + selection outlines + toolbar
+      });
+    });
+
     // Delete handler via event delegation
     grid.onclick = async (e) => {
+      const histBtn = e.target.closest('[data-history-content]');
+      if (histBtn) {
+        const c = content.find(x => x.id === histBtn.dataset.historyContent);
+        openHistoryModal('content', histBtn.dataset.historyContent, { name: c?.name || c?.filename, onChanged: () => loadContent() });
+        return;
+      }
+      // #213: ignore clicks originating on a selection checkbox (handled above).
+      if (e.target.closest('.content-select-wrap')) return;
       // Preview on click (not on delete button)
       const previewTarget = e.target.closest('.content-item-preview');
       if (previewTarget) {
@@ -517,9 +637,89 @@ async function loadContent() {
       }, 3000);
     };
 
+    // #213: batch-operations toolbar reflects the current selection.
+    renderBatchToolbar(content);
+
   } catch (err) {
     grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><h3>${t('content.failed_to_load')}</h3><p>${esc(err.message)}</p></div>`;
   }
+
+  // #313/checklist: adding content ticks a step, and this is the one path every add
+  // (file, remote URL, YouTube) already goes through.
+  gettingStarted.refresh().catch(() => {});
+}
+
+// #213: the batch toolbar — shown only when something is selected. `visible` is the current
+// page's items, used by "select all". Actions validate/act atomically server-side; on success
+// the selection is cleared and the grid reloaded.
+function renderBatchToolbar(visible) {
+  const bar = document.getElementById('batchToolbar');
+  if (!bar) return;
+  const count = state.selected.size;
+  if (count === 0) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+
+  const allVisibleSelected = visible.length > 0 && visible.every(c => state.selected.has(c.id));
+  bar.style.display = 'flex';
+  bar.style.cssText = 'display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;padding:10px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg)';
+  bar.innerHTML = `
+    <strong style="font-size:13px">${t('content.batch_selected', { count })}</strong>
+    <button class="btn btn-secondary btn-sm" id="batchSelectAll">${allVisibleSelected ? t('content.batch_select_none') : t('content.batch_select_all')}</button>
+    <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
+      <select id="batchMoveFolder" class="input btn-sm" style="width:auto;background:var(--bg-input)">
+        <option value="">${t('content.batch_move_placeholder')}</option>
+        <option value="__root__">${t('content.folder_root_option')}</option>
+        ${state.folders.map(f => `<option value="${f.id}">${esc(folderPath(f, state.folders))}</option>`).join('')}
+      </select>
+      <button class="btn btn-danger btn-sm" id="batchDelete">${t('content.batch_delete', { count })}</button>
+    </div>
+  `;
+
+  bar.querySelector('#batchSelectAll').onclick = () => {
+    if (allVisibleSelected) visible.forEach(c => state.selected.delete(c.id));
+    else visible.forEach(c => state.selected.add(c.id));
+    loadContent();
+  };
+
+  bar.querySelector('#batchMoveFolder').onchange = async (e) => {
+    const val = e.target.value;
+    if (!val) return;
+    const folderId = val === '__root__' ? null : val;
+    const ids = [...state.selected];
+    try {
+      await api.batchMoveContent(ids, folderId);
+      showToast(t('content.toast.batch_moved', { count: ids.length }), 'success');
+      state.selected.clear();
+      state.lastClickedId = null;
+      loadContent();
+    } catch (err) {
+      showToast(err.message, 'error');
+      e.target.value = '';
+    }
+  };
+
+  const delBtn = bar.querySelector('#batchDelete');
+  delBtn.onclick = async () => {
+    const ids = [...state.selected];
+    if (delBtn.dataset.confirming !== 'true') {
+      delBtn.dataset.confirming = 'true';
+      delBtn.textContent = t('content.batch_delete_confirm', { count: ids.length });
+      setTimeout(() => { if (delBtn.dataset.confirming === 'true') { delBtn.dataset.confirming = 'false'; delBtn.textContent = t('content.batch_delete', { count: ids.length }); } }, 3000);
+      return;
+    }
+    try {
+      delBtn.disabled = true;
+      await api.batchDeleteContent(ids);
+      showToast(t('content.toast.batch_deleted', { count: ids.length }), 'success');
+      state.selected.clear();
+      state.lastClickedId = null;
+      loadContent();
+    } catch (err) {
+      showToast(err.message, 'error');
+      delBtn.disabled = false;
+      delBtn.dataset.confirming = 'false';
+      delBtn.textContent = t('content.batch_delete', { count: ids.length });
+    }
+  };
 }
 
 function showEditModal(contentItem, onSave) {
@@ -528,6 +728,12 @@ function showEditModal(contentItem, onSave) {
   overlay.style.display = 'flex';
 
   const isRemote = !!contentItem.remote_url;
+  const isYoutube = contentItem.mime_type === 'video/youtube';
+  const isUploadedVideo = !isRemote && contentItem.mime_type?.startsWith('video/');
+  // #216: language <option>s shared by the caption + subtitle pickers.
+  const langOptions = (sel) => SUBTITLE_LANGS
+    .map(([code, label]) => `<option value="${code}" ${sel === code ? 'selected' : ''}>${label}</option>`)
+    .join('');
 
   overlay.innerHTML = `
     <div class="modal" style="max-width:500px;width:95vw">
@@ -557,6 +763,15 @@ function showEditModal(contentItem, onSave) {
             <option value="image/png" ${contentItem.mime_type === 'image/png' ? 'selected' : ''}>${t('content.mime.image_png')}</option>
             <option value="image/gif" ${contentItem.mime_type === 'image/gif' ? 'selected' : ''}>${t('content.mime.image_gif')}</option>
             <option value="image/webp" ${contentItem.mime_type === 'image/webp' ? 'selected' : ''}>${t('content.mime.image_webp')}</option>
+              ${['video/mp4','video/webm','image/jpeg','image/png','image/gif','image/webp'].includes(contentItem.mime_type) ? '' : `
+              <!-- The item's ACTUAL type, for the cases the six choices above cannot express:
+                   video/youtube, and uploads the sniffer accepts but this list omits (.mov, .svg,
+                   .heic, .avif, .bmp). Without it no option matched, the browser selected the first
+                   one - video/mp4 - and pressing Save with nothing else changed rewrote the item's
+                   type. mime_type is the renderer selector in every player, so a YouTube item became
+                   an "MP4" whose source is an embed page: a dead slide on every screen, and
+                   unrecoverable here because there was no option to set it back. -->
+              <option value="${esc(contentItem.mime_type || '')}" selected>${esc(contentItem.mime_type || '')}</option>`}
           </select>
         </div>
         <div class="form-group">
@@ -571,10 +786,45 @@ function showEditModal(contentItem, onSave) {
           <input type="datetime-local" id="editExpiresAt" class="input" style="background:var(--bg-input)" value="${toLocalDatetimeInput(contentItem.expires_at)}">
           <p style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('content.expires_hint')}</p>
         </div>
+        ${isYoutube ? `
+        <div class="form-group">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="editUnstableConnection" ${contentItem.unstable_connection ? 'checked' : ''} style="width:auto;margin:0">
+            <span>${t('content.label_unstable_connection')}</span>
+          </label>
+          <p style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('content.unstable_connection_hint')}</p>
+        </div>
+        ` : ''}
+        ${isYoutube ? `
+        <div class="form-group">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="editCaptionsEnabled" ${contentItem.captions_enabled ? 'checked' : ''} style="width:auto;margin:0">
+            <span>${t('content.label_captions_enabled')}</span>
+          </label>
+          <div style="margin-top:8px">
+            <label style="font-size:12px;color:var(--text-secondary)">${t('content.label_captions_lang')}</label>
+            <select id="editCaptionsLang" class="input" style="background:var(--bg-input)">${langOptions(contentItem.captions_lang || 'en')}</select>
+          </div>
+          <p style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('content.captions_hint')}</p>
+        </div>
+        ` : ''}
+        ${isUploadedVideo ? `
+        <div class="form-group">
+          <label>${t('content.label_subtitle_file')}</label>
+          ${contentItem.subtitle_url ? `<p style="font-size:11px;color:var(--text-secondary);margin:2px 0 6px">${t('content.subtitle_current')}</p>` : ''}
+          <input type="file" id="editSubtitleFile" accept=".vtt,text/vtt" style="font-size:13px;color:var(--text-secondary)">
+          <div style="margin-top:8px">
+            <label style="font-size:12px;color:var(--text-secondary)">${t('content.label_subtitle_lang')}</label>
+            <select id="editSubtitleLang" class="input" style="background:var(--bg-input)">${langOptions(contentItem.subtitle_lang || 'en')}</select>
+          </div>
+          ${contentItem.subtitle_url ? `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:8px"><input type="checkbox" id="editSubtitleRemove" style="width:auto;margin:0"><span>${t('content.subtitle_remove')}</span></label>` : ''}
+          <p style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('content.subtitle_hint')}</p>
+        </div>
+        ` : ''}
         ${!isRemote ? `
         <div class="form-group">
           <label>${t('content.label_replace_file')}</label>
-          <input type="file" id="editFileReplace" accept="video/*,image/*" style="font-size:13px;color:var(--text-secondary)">
+          <input type="file" id="editFileReplace" accept="video/*,image/*,audio/*,.zip,.wgt" style="font-size:13px;color:var(--text-secondary)">
           <p style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('content.replace_file_hint')}</p>
         </div>
         ` : ''}
@@ -613,19 +863,51 @@ function showEditModal(contentItem, onSave) {
       const newExpiry = expiryRaw ? Math.floor(new Date(expiryRaw).getTime() / 1000) : null;
       const curExpiry = contentItem.expires_at != null ? Number(contentItem.expires_at) : null;
       if (newExpiry !== curExpiry) updateData.expires_at = newExpiry;
+      // #217: YouTube-only "unstable connection" quality cap.
+      const unstableEl = overlay.querySelector('#editUnstableConnection');
+      if (unstableEl) {
+        const newUnstable = unstableEl.checked ? 1 : 0;
+        if (newUnstable !== (contentItem.unstable_connection ? 1 : 0)) updateData.unstable_connection = newUnstable;
+      }
+      // #216: YouTube captions (checkbox + language).
+      const captionsEl = overlay.querySelector('#editCaptionsEnabled');
+      if (captionsEl) {
+        const newCaptions = captionsEl.checked ? 1 : 0;
+        if (newCaptions !== (contentItem.captions_enabled ? 1 : 0)) updateData.captions_enabled = newCaptions;
+        const capLang = overlay.querySelector('#editCaptionsLang')?.value || null;
+        if (capLang !== (contentItem.captions_lang || 'en')) updateData.captions_lang = capLang;
+      }
+      // #216: uploaded-video subtitle language change / removal (the FILE is sent separately below).
+      const subtitleFile = overlay.querySelector('#editSubtitleFile')?.files[0];
+      const subLangEl = overlay.querySelector('#editSubtitleLang');
+      const subRemove = overlay.querySelector('#editSubtitleRemove')?.checked;
+      if (subRemove) {
+        updateData.subtitle_url = null;
+        updateData.subtitle_lang = null;
+      } else if (subLangEl && !subtitleFile) {
+        // Lang-only change (no new file) — the upload endpoint handles lang when a file IS sent.
+        const subLang = subLangEl.value || null;
+        if (contentItem.subtitle_url && subLang !== (contentItem.subtitle_lang || 'en')) updateData.subtitle_lang = subLang;
+      }
 
+      let pendingReview = false;
       if (Object.keys(updateData).length > 0) {
-        await fetch('/api/content/' + contentItem.id, {
+        assertLocalCallAllowed('/content', 'PUT');
+        const r = await fetch('/api/content/' + contentItem.id, {
           method: 'PUT',
           headers: { ...headers, 'Content-Type': 'application/json' },
           body: JSON.stringify(updateData)
         });
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(body.error || 'Update failed');
+        pendingReview = !!body.pending_review;
       }
 
       // Replace file if provided
       if (replaceFile) {
         const formData = new FormData();
         formData.append('file', replaceFile);
+        assertLocalCallAllowed('/content', 'POST');
         await fetch('/api/content/' + contentItem.id + '/replace', {
           method: 'PUT',
           headers,
@@ -633,8 +915,21 @@ function showEditModal(contentItem, onSave) {
         });
       }
 
+      // #216: upload a new subtitle .vtt if one was chosen (skipped when "remove" is ticked).
+      if (subtitleFile && !subRemove) {
+        const subForm = new FormData();
+        subForm.append('subtitle', subtitleFile);
+        if (subLangEl?.value) subForm.append('subtitle_lang', subLangEl.value);
+        assertLocalCallAllowed('/content', 'POST');
+        await fetch('/api/content/' + contentItem.id + '/subtitle', {
+          method: 'POST',
+          headers,
+          body: subForm
+        });
+      }
+
       overlay.remove();
-      showToast(t('content.toast.updated'), 'success');
+      showToast(pendingReview ? t('review.toast.saved_as_draft') : t('content.toast.updated'), 'success');
       if (onSave) onSave();
     } catch (err) {
       showToast(err.message || t('content.error_update_failed'), 'error');
@@ -642,7 +937,52 @@ function showEditModal(contentItem, onSave) {
   };
 }
 
-function showPreview(content) {
+async function showPreview(content) {
+  /*
+   * ⚠️ A BUNDLE IS PREVIEWED THROUGH AN EPHEMERAL SESSION, NOT ITS PUBLIC URL. /api/content/:id/
+   * bundle is gated on the content being referenced by a playlist — which a just-uploaded bundle is
+   * not — so pointing an iframe at it here would 403 and show an empty box. That is the same
+   * "preview shows nothing" trap the directory-board backgrounds had.
+   *
+   * The frame is sandboxed to allow-scripts with NO allow-same-origin, exactly as a player mounts
+   * it. This is the dashboard origin, where the session JWT lives in localStorage, so that is not
+   * a detail: an operator-uploaded bundle must never run with access to it.
+   *
+   * ⚠️ AND IT MUST BE src=, NOT srcdoc, even though the player uses srcdoc for the same bytes. A
+   * srcdoc frame inherits ITS PARENT'S CSP; this page has one (`script-src 'self'`) and a flattened
+   * bundle is entirely data: URIs, so every script in it would be blocked and the preview would
+   * render a styled, dead page with nothing in any log. The player gets away with srcdoc only
+   * because /player is CSP-exempt. Measured both ways — do not "simplify" this to srcdoc.
+   */
+  if (content.mime_type === BUNDLE_MIME) {
+    let session;
+    try {
+      session = await api.post(`/content/${content.id}/bundle-preview`);
+    } catch (err) {
+      showToast(err.message || t('content.bundle_preview_failed'), 'error');
+      return;
+    }
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.style.display = 'flex';
+    overlay.innerHTML = `
+      <div style="background:var(--bg-secondary);border-radius:var(--radius-lg);max-width:90vw;max-height:90vh;overflow:hidden;position:relative">
+        <button style="position:absolute;top:8px;right:8px;z-index:1;background:rgba(0,0,0,0.7);border:none;color:white;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer" id="closePreview">&times;</button>
+        <iframe sandbox="allow-scripts" src="${esc(session.url)}" style="width:80vw;height:45vw;max-height:80vh;display:block;border:none;background:#000"></iframe>
+        <div style="padding:12px 16px;border-top:1px solid var(--border)">
+          <div style="font-weight:500">${esc(content.filename)}</div>
+          <div style="font-size:12px;color:var(--text-muted)">${t('content.type_bundle')} — ${t('content.bundle_entry', { entry: esc(content.bundle_entry || 'index.html') })}</div>
+          ${(session.skipped && session.skipped.length)
+            ? `<div style="font-size:12px;color:#f59e0b;margin-top:6px">${t('content.bundle_skipped', { n: session.skipped.length })}</div>`
+            : ''}
+        </div>
+      </div>`;
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    overlay.querySelector('#closePreview').onclick = () => overlay.remove();
+    document.body.appendChild(overlay);
+    return;
+  }
+
   const isYoutube = content.mime_type === 'video/youtube';
   const isVideo = !isYoutube && content.mime_type?.startsWith('video/');
   const src = content.remote_url || `/uploads/content/${content.filepath}`;

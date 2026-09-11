@@ -1,9 +1,27 @@
-import { api } from '../api.js';
+import { api, assertLocalCallAllowed } from '../api.js';
 import { showToast } from '../components/toast.js';
 import { t, tn } from '../i18n.js';
 import { esc } from '../utils.js';
+import { renderApprovalBar } from '../components/approval-actions.js';
 
-const API = (url, opts = {}) => fetch('/api' + url, { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}`, ...opts.headers }, ...opts }).then(r => r.json());
+// A refused request must reject, not resolve.
+//
+// This helper used to end in `.then(r => r.json())`, so a 403/404/500 body resolved as an ordinary
+// value and the surrounding try/catch was unreachable — every handler took the failure for success.
+// Concretely: deleting a built-in layout template showed "Layout deleted" while the server had
+// returned 403 and the template was still there, and a rejected platform-role change showed "Role
+// updated" while the dropdown kept displaying a value the server refused (its revert lives only in
+// the dead catch). The shared client in api.js has always thrown on !res.ok; these local copies did
+// not. Same contract now, including the 401 session-expiry reload.
+const API = (url, opts = {}) => {
+  // ⚠️ This helper bypasses api.js's routing, so it must ask the same question itself.
+  assertLocalCallAllowed(url, opts.method);
+  return fetch('/api' + url, { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}`, ...opts.headers }, ...opts }).then(async (r) => {
+  if (r.status === 401) { localStorage.removeItem('token'); window.location.reload(); throw new Error('Session expired'); }
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || `Request failed (${r.status})`); }
+  return r.json();
+  });
+};
 
 export async function render(container) {
   const hash = window.location.hash;
@@ -104,6 +122,20 @@ function renderLayoutCard(layout, isTemplate) {
   `;
 }
 
+/*
+ * Canvas aspect as a padding-top percentage: the layout's own height/width.
+ *
+ * Falls back to 16:9 when a layout carries no usable dimensions, and clamps so a pathological
+ * value cannot produce a canvas taller than the screen or thinner than a line — these rows are
+ * user-editable, and an unusable editor is worse than a slightly wrong aspect.
+ */
+function canvasRatioPct(layout) {
+  const w = Number(layout && layout.width) || 1920;
+  const h = Number(layout && layout.height) || 1080;
+  if (!(w > 0 && h > 0)) return 56.25;
+  return Math.min(300, Math.max(20, (h / w) * 100));
+}
+
 async function renderEditor(container, layoutId) {
   let layout;
   try {
@@ -116,16 +148,25 @@ async function renderEditor(container, layoutId) {
       ${t('layout.back')}
     </a>
     <div class="page-header">
-      <h1 id="layoutName">${esc(layout.name)}</h1>
+      <!-- Editable in place. Duplicating a template names the copy "<template> (Copy)" and there
+           was nowhere at all to change it — the only name field in this editor belongs to the
+           selected ZONE, which is easy to mistake for the layout's own. Reported on #234. -->
+      <input id="layoutName" class="input" value="${esc((layout.draft && layout.draft.name) || layout.name)}"
+             aria-label="${t('layout.rename')}" title="${t('layout.rename')}"
+             style="font-size:24px;font-weight:600;background:transparent;border:1px solid transparent;padding:2px 6px;max-width:420px">
       <div style="display:flex;gap:8px">
         <button class="btn btn-secondary btn-sm" id="addZoneBtn">${t('layout.add_zone')}</button>
         <button class="btn btn-primary btn-sm" id="saveLayoutBtn">${t('common.save')}</button>
       </div>
     </div>
+    <div id="layoutApprovalBar" style="margin:-8px 0 12px"></div>
     <div style="display:flex;gap:20px">
       <div style="flex:1">
         <div id="canvasWrap" style="position:relative;background:var(--bg-primary);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden">
-          <div id="canvas" style="position:relative;width:100%;padding-top:56.25%">
+          <!-- Canvas mirrors THIS layout's shape, not a fixed 16:9. It was hardcoded to 56.25%
+               (the padding-ratio trick for 16:9), so authoring a portrait layout meant dragging
+               zones on a landscape canvas: correct on the panel, wrong everywhere you designed it. -->
+          <div id="canvas" style="position:relative;width:100%;padding-top:${canvasRatioPct(layout)}%">
           </div>
         </div>
       </div>
@@ -158,7 +199,10 @@ async function renderEditor(container, layoutId) {
     </div>
   `;
 
-  let zones = layout.zones || [];
+  // A pending draft (workspace approval on) is the author's unpublished work; the editor opens on
+  // it rather than on the live zones, which are what screens are still showing. GET /layouts/:id
+  // sends both - `zones` live, `draft` when one exists.
+  let zones = (layout.draft && Array.isArray(layout.draft.zones)) ? layout.draft.zones : (layout.zones || []);
   let selectedZone = null;
   let dragging = null;
 
@@ -183,6 +227,19 @@ async function renderEditor(container, layoutId) {
         selectedZone = i;
         renderZones();
         updateProperties();
+        /*
+         * ⚠️ renderZones() JUST DESTROYED THE NODE THIS HANDLER CLOSED OVER (#316).
+         *
+         * It removes every .zone-el and builds them again to redraw the selection highlight, so
+         * from this line on `el` is detached. Dragging still updated z.x_percent — the data object
+         * survives — but painted the result onto an orphan, so nothing moved under the pointer and
+         * the zone only jumped to its new place at the NEXT render, i.e. the next time you clicked.
+         * Reported as "the squares can't be moved freely, their position updates after clicking
+         * again", in both Chrome and Firefox, which is what a DOM bug rather than a mouse bug looks
+         * like. Re-acquire the live node before anything reads or writes it. The resize handle
+         * below never had this because it does not re-render on mousedown.
+         */
+        const live = canvas.querySelector(`.zone-el[data-index="${i}"]`) || el;
         const rect = canvas.getBoundingClientRect();
         const startX = e.clientX;
         const startY = e.clientY;
@@ -194,8 +251,8 @@ async function renderEditor(container, layoutId) {
           const dy = (e2.clientY - startY) / rect.height * 100;
           z.x_percent = Math.max(0, Math.min(100 - z.width_percent, Math.round((origX + dx) * 10) / 10));
           z.y_percent = Math.max(0, Math.min(100 - z.height_percent, Math.round((origY + dy) * 10) / 10));
-          el.style.left = z.x_percent + '%';
-          el.style.top = z.y_percent + '%';
+          live.style.left = z.x_percent + '%';
+          live.style.top = z.y_percent + '%';
           updateProperties();
         };
         const onUp = () => {
@@ -297,15 +354,19 @@ async function renderEditor(container, layoutId) {
       // exactly. The old per-zone delete-then-add loop could accumulate zones
       // (and regenerated every zone id each save). Keep each zone's id so
       // device->zone assignments survive.
+        const newName = (document.getElementById('layoutName')?.value || '').trim();
       const updated = await API(`/layouts/${layoutId}`, {
         method: 'PUT',
-        body: JSON.stringify({ zones }),
+        // Name goes with the zones so renaming is part of the Save the user already
+        // presses, not a second hidden action.
+        body: JSON.stringify(newName ? { zones, name: newName } : { zones }),
       });
       if (updated && updated.error) { showToast(updated.error, 'error'); return; }
       layout = updated;
       zones = layout.zones || [];
       selectedZone = null;
-      showToast(t('layout.toast.saved'), 'success');
+      showToast(updated.pending_review ? t('review.toast.saved_as_draft') : t('layout.toast.saved'), 'success');
+      renderApprovalBar(document.getElementById('layoutApprovalBar'), { type: 'layout', id: layoutId, name: layout.name, onChanged: () => renderEditor(container, layoutId) });
       renderZones();
       updateProperties();
     } catch (err) {
@@ -314,6 +375,7 @@ async function renderEditor(container, layoutId) {
   };
 
   renderZones();
+  renderApprovalBar(document.getElementById('layoutApprovalBar'), { type: 'layout', id: layoutId, name: layout.name, onChanged: () => renderEditor(container, layoutId) });
 }
 
 export function cleanup() {}

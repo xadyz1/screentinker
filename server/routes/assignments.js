@@ -8,19 +8,13 @@ const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
 // though playlists.js itself isn't yet workspace-filtered.
 const { accessContext } = require('../lib/tenancy');
 const { zoneInLayout } = require('../lib/zone-validate');
+// #237 + #widget zero-duration loop: one place decides what duration a new item gets —
+// explicit value, else the content's own length, else the 10s default (and never a 0).
+const { resolveItemDuration } = require('../lib/item-duration');
 
 // Mark playlist as draft (called after any item mutation)
 function markDraft(playlistId) {
   db.prepare("UPDATE playlists SET status = 'draft', updated_at = strftime('%s','now') WHERE id = ?").run(playlistId);
-}
-
-// Hardening (#widget zero-duration loop): a non-positive duration — especially
-// duration_sec=0 on a widget — makes the player schedule a 0ms auto-advance, which
-// self-loops and black-screens the TV. Never STORE a bad value: floor any missing/
-// invalid/<1 duration to the 10s default so it can't reach a device.
-function normalizeDuration(v) {
-  const n = Number(v);
-  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 10;
 }
 
 // Hardening (#zone-orphan): a zone_id only renders if it belongs to the layout the
@@ -41,8 +35,15 @@ function validZoneForLayout(zoneId, deviceLayoutId, ctx) {
 
 // Phase 2.2j: workspace-aware device access check. Returns access context
 // (with workspaceRole/actingAs) or null. Caller decides if read or write.
-function checkDeviceAccess(req, res, paramName = 'deviceId', requireWrite = true) {
-  const device = db.prepare('SELECT workspace_id FROM devices WHERE id = ?').get(req.params[paramName]);
+/*
+ * explicitId is for the item-scoped routes, where the device is named in the BODY or QUERY rather
+ * than the path — device_id there decides whose screen a fork belongs to, so it must be authorised
+ * exactly like a path param. Passing it through req.params was the obvious shortcut and would have
+ * silently skipped this check, because req.params has no such key.
+ */
+function checkDeviceAccess(req, res, paramName = 'deviceId', requireWrite = true, explicitId = null) {
+  const deviceId = explicitId || req.params[paramName];
+  const device = db.prepare('SELECT workspace_id FROM devices WHERE id = ?').get(deviceId);
   if (!device) { res.status(404).json({ error: 'Device not found' }); return null; }
   if (!device.workspace_id) { res.status(403).json({ error: 'Device not assigned to a workspace' }); return null; }
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(device.workspace_id);
@@ -59,12 +60,31 @@ function checkDeviceAccess(req, res, paramName = 'deviceId', requireWrite = true
 // visible once playlists.js migrates. Mirrors the 2.2i fix in device-groups.js.
 function ensureDevicePlaylist(deviceId, userId) {
   const device = db.prepare('SELECT playlist_id, workspace_id, name FROM devices WHERE id = ?').get(deviceId);
-  if (device?.playlist_id) return device.playlist_id;
+  /*
+   * ⚠️ A per-device edit on an INHERITING screen forks, rather than editing the shared playlist.
+   *
+   * "Add content to this screen" used to edit the group's playlist and therefore every other screen
+   * in the group. That was never intended — it fell out of every device holding a copy of the same
+   * playlist id — and the device page now labels such a screen "Inherited from Lobby" right beside
+   * the Add Content button, which makes the old behaviour read as a bug rather than a design.
+   *
+   * forkInheritedPlaylist copies the inherited playlist (items, nesting, mute, per-item schedules
+   * AND its published snapshot, so the screen does not go dark before the operator publishes) into
+   * one owned by this device, and stamps playlist_source = 'device'.
+   */
+  const forked = forkInheritedPlaylist(deviceId, userId);
+  if (forked) return forked.playlistId;
+
+  // Already this screen's own, or driven by an active schedule: edit it in place.
+  const resolved = resolveDevicePlaylistId(deviceId);
+  if (resolved) return resolved;
 
   const playlistId = uuidv4();
   db.prepare('INSERT INTO playlists (id, user_id, workspace_id, name, is_auto_generated) VALUES (?, ?, ?, ?, 1)')
     .run(playlistId, userId, device?.workspace_id || null, `${device?.name || 'Display'} playlist`);
-  db.prepare('UPDATE devices SET playlist_id = ? WHERE id = ?').run(playlistId, deviceId);
+  // A playlist made FOR this screen is a choice, not an inheritance: stamp it, or the resolver
+  // would look straight past it at the group and the new playlist would never play.
+  db.prepare("UPDATE devices SET playlist_id = ?, playlist_source = 'device' WHERE id = ?").run(playlistId, deviceId);
   return playlistId;
 }
 
@@ -105,17 +125,20 @@ router.post('/device/:deviceId', (req, res) => {
   const access = checkDeviceAccess(req, res, 'deviceId', true);
   if (!access) return;
   const { content_id, widget_id, zone_id, sort_order } = req.body;
-  const duration_sec = normalizeDuration(req.body.duration_sec);
 
   if (!content_id && !widget_id) return res.status(400).json({ error: 'content_id or widget_id required' });
 
+  let content = null;
   if (content_id) {
-    const content = db.prepare('SELECT id, workspace_id FROM content WHERE id = ?').get(content_id);
+    content = db.prepare('SELECT id, workspace_id, duration_sec FROM content WHERE id = ?').get(content_id);
     if (!content) return res.status(404).json({ error: 'Content not found' });
     if (content.workspace_id && content.workspace_id !== access.device.workspace_id) {
       return res.status(403).json({ error: 'Content is not in this device\'s workspace' });
     }
   }
+  // #237: pushing a video straight at a display is the shortest path in the product, so it
+  // has to default to the clip's length too — not the 10s that cut it off mid-play.
+  const duration_sec = resolveItemDuration(req.body.duration_sec, content);
   if (widget_id) {
     const widget = db.prepare('SELECT id, workspace_id FROM widgets WHERE id = ?').get(widget_id);
     if (!widget) return res.status(404).json({ error: 'Widget not found' });
@@ -170,71 +193,40 @@ function checkItemWrite(req, res) {
   return item;
 }
 
-// #129 + mute-fix: per-item mute has to do TWO things, because the device plays from
-// playlists.published_snapshot (deviceSocket.buildPlaylistPayload), NOT the draft
-// playlist_items the toggle writes:
-//   (1) LIVE — tell every device on this playlist to silence the matching currently-playing
-//       item NOW (device matches by content_id/widget_id). Mutes the in-progress playthrough.
-//   (2) PERSIST — patch the matching item's `muted` inside the published_snapshot the device
-//       actually plays, then re-push the playlist. Without this the snapshot kept muted=0, so
-//       every loop/reload re-applied full volume — the "icon red but audio plays across 3
-//       playthroughs" bug (Android re-loads each loop; web's native <video> loop masked it).
-// We patch the snapshot SURGICALLY (just the muted field of matching items) rather than calling
-// publishPlaylist, so a mute toggle can't prematurely publish other pending draft edits or flip
-// the playlist's draft/published status. muted is written as 0/1 to match buildSnapshotItems'
-// format (the player reads it via optInt). playlist_items.muted is still updated by the caller,
-// so a later full publish stays consistent.
-function emitMuteChanged(req, item, muted) {
-  try {
-    const io = req.app.get('io');
-    if (!io) return;
-    const deviceNs = io.of('/device');
-    const m = !!muted;
-
-    // (2) PERSIST: patch the published snapshot the device reads from.
-    const pl = db.prepare('SELECT published_snapshot FROM playlists WHERE id = ?').get(item.playlist_id);
-    if (pl && pl.published_snapshot) {
-      let snap = null;
-      try { snap = JSON.parse(pl.published_snapshot); } catch (e) { snap = null; }
-      if (Array.isArray(snap)) {
-        let changed = false;
-        for (const s of snap) {
-          const match = item.content_id ? s.content_id === item.content_id
-            : (item.widget_id ? s.widget_id === item.widget_id : false);
-          if (match && (s.muted ? 1 : 0) !== (m ? 1 : 0)) { s.muted = m ? 1 : 0; changed = true; }
-        }
-        if (changed) {
-          db.prepare('UPDATE playlists SET published_snapshot = ? WHERE id = ?')
-            .run(JSON.stringify(snap), item.playlist_id);
-        }
-      }
-    }
-
-    // (1) LIVE toggle + re-deliver the patched snapshot so loops re-apply the correct flag.
-    // Lazy require (matches playlists.pushToDevices) to avoid a route<->ws circular import.
-    const { buildPlaylistPayload } = require('../ws/deviceSocket');
-    const commandQueue = require('../lib/command-queue');
-    const devices = db.prepare('SELECT id FROM devices WHERE playlist_id = ?').all(item.playlist_id);
-    const payload = { content_id: item.content_id || null, widget_id: item.widget_id || null, muted: m };
-    for (const d of devices) {
-      deviceNs.to(d.id).emit('device:mute-changed', payload);                        // current playthrough
-      commandQueue.queueOrEmitPlaylistUpdate(deviceNs, d.id, buildPlaylistPayload);  // future loads (no reload of current item)
-    }
-    console.log(`[mute] item ${item.id} (content ${item.content_id || item.widget_id}) -> ${m ? 'MUTED' : 'unmuted'}; snapshot patched + notified ${devices.length} device(s)`);
-  } catch (e) { /* best-effort; playlist_items.muted is still updated for the next full publish */ }
-}
+// Per-item mute lives in lib/mute-sync.js so routes/playlists.js can share it.
+const { emitMuteChanged } = require('../lib/mute-sync');
+const { resolveDevicePlaylistId } = require('../lib/resolve-device-playlist');
+const { forkInheritedPlaylist, forkForItemEdit } = require('../lib/fork-device-playlist');
 
 // Update playlist item
 router.put('/:id', (req, res) => {
-  const item = checkItemWrite(req, res);
+  let item = checkItemWrite(req, res);
   if (!item) return;
+
+  /*
+   * ⚠️ device_id turns an item-scoped edit back into a per-screen one.
+   *
+   * This endpoint is addressed by ITEM, so it cannot know whose screen is being edited — a shared
+   * playlist has many. Editing an item on a screen that INHERITS therefore changed that item for
+   * every screen in the group. The device page passes device_id so the same fork-on-write rule as
+   * "add content to this screen" applies here; without it (the group page, the API) the item is
+   * edited where it lives, which is correct for those callers.
+   */
+  if (req.body.device_id) {
+    if (!checkDeviceAccess(req, res, 'body_device_id', true, req.body.device_id)) return;
+    const forkedItemId = forkForItemEdit(req.body.device_id, req.user.id, req.params.id);
+    if (String(forkedItemId) !== String(req.params.id)) {
+      req.params.id = forkedItemId;
+      item = db.prepare('SELECT * FROM playlist_items WHERE id = ?').get(forkedItemId);
+    }
+  }
 
   const { sort_order, duration_sec, zone_id, muted } = req.body;
   const updates = [];
   const values = [];
 
   if (sort_order !== undefined) { updates.push('sort_order = ?'); values.push(sort_order); }
-  if (duration_sec !== undefined) { updates.push('duration_sec = ?'); values.push(normalizeDuration(duration_sec)); }
+  if (duration_sec !== undefined) { updates.push('duration_sec = ?'); values.push(resolveItemDuration(duration_sec, null)); }
   // zone_id can be null (clear the zone) - treat undefined as "no change",
   // any other value (including null) as "write this".
   if (zone_id !== undefined) {
@@ -243,7 +235,9 @@ router.put('/:id', (req, res) => {
     // playlists can't be bound to one layout here, so we leave those to the player fallback.
     let effZone = zone_id || null;
     if (effZone) {
-      const devs = db.prepare('SELECT layout_id FROM devices WHERE playlist_id = ? AND layout_id IS NOT NULL').all(item.playlist_id);
+      const devs = db.prepare(`SELECT d.layout_id FROM devices d
+        JOIN device_resolved_playlist r ON r.device_id = d.id
+        WHERE r.playlist_id = ? AND d.layout_id IS NOT NULL`).all(item.playlist_id);
       if (devs.length === 1) effZone = validZoneForLayout(effZone, devs[0].layout_id, `on update of item ${req.params.id}`);
     }
     updates.push('zone_id = ?'); values.push(effZone);
@@ -267,8 +261,21 @@ router.put('/:id', (req, res) => {
 
 // Delete playlist item
 router.delete('/:id', (req, res) => {
-  const item = checkItemWrite(req, res);
+  let item = checkItemWrite(req, res);
   if (!item) return;
+
+  // Same rule as PUT above: removing an item from a screen that inherits used to remove it from
+  // every screen in the group. device_id (query param here — a DELETE carries no body from the
+  // dashboard) says which screen is meant.
+  const deviceId = req.query.device_id;
+  if (deviceId) {
+    if (!checkDeviceAccess(req, res, 'query_device_id', true, deviceId)) return;
+    const forkedItemId = forkForItemEdit(deviceId, req.user.id, req.params.id);
+    if (String(forkedItemId) !== String(req.params.id)) {
+      req.params.id = forkedItemId;
+      item = db.prepare('SELECT * FROM playlist_items WHERE id = ?').get(forkedItemId);
+    }
+  }
 
   db.prepare('DELETE FROM playlist_items WHERE id = ?').run(req.params.id);
   markDraft(item.playlist_id);
@@ -282,21 +289,33 @@ router.post('/device/:deviceId/reorder', (req, res) => {
   const { order } = req.body;
   if (!Array.isArray(order)) return res.status(400).json({ error: 'order must be an array of item IDs' });
 
-  const device = db.prepare('SELECT playlist_id FROM devices WHERE id = ?').get(req.params.deviceId);
-  if (!device?.playlist_id) return res.json([]);
+  /*
+   * ⚠️ Resolved, and forked. This read devices.playlist_id directly, which is NULL for a screen
+   * that inherits now that the copies are gone — so a drag-and-drop on an inheriting screen
+   * silently returned an empty list and reordered nothing.
+   *
+   * Reordering "this screen" is a per-device edit like any other, so it forks; the ids the client
+   * sent belong to the shared playlist and are translated to the fork's equivalents. Without the
+   * translation the UPDATE would match nothing (they are in a different playlist) and the reorder
+   * would appear to succeed while changing nothing at all.
+   */
+  const forked = forkInheritedPlaylist(req.params.deviceId, req.user.id);
+  const playlistId = forked ? forked.playlistId : resolveDevicePlaylistId(req.params.deviceId);
+  if (!playlistId) return res.json([]);
+  const mapId = (itemId) => (forked ? (forked.itemIdMap.get(Number(itemId)) ?? itemId) : itemId);
 
   const updateStmt = db.prepare('UPDATE playlist_items SET sort_order = ? WHERE id = ? AND playlist_id = ?');
   const transaction = db.transaction(() => {
     order.forEach((itemId, index) => {
-      updateStmt.run(index, itemId, device.playlist_id);
+      updateStmt.run(index, mapId(itemId), playlistId);
     });
   });
   transaction();
 
-  markDraft(device.playlist_id);
+  markDraft(playlistId);
 
   const items = db.prepare(`${ITEM_SELECT} WHERE pi.playlist_id = ? ORDER BY pi.sort_order ASC`)
-    .all(device.playlist_id);
+    .all(playlistId);
   res.json(items);
 });
 
@@ -333,11 +352,35 @@ router.post('/device/:deviceId/copy-to/:targetDeviceId', (req, res) => {
 
   const maxOrder = db.prepare('SELECT MAX(sort_order) as m FROM playlist_items WHERE playlist_id = ?')
     .get(targetPlaylistId).m || 0;
-  const stmt = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, widget_id, zone_id, sort_order, duration_sec) VALUES (?, ?, ?, ?, ?, ?)');
+  /*
+   * ⚠️ Nested items copy as REFERENCES, not as a flattened copy of the child's contents — the
+   * whole point of nesting is that editing the child reaches every parent, and flattening here
+   * would quietly sever that for the target device.
+   *
+   * But depth still has to hold. If the target's own playlist is already used inside another
+   * playlist, dropping a child into it builds a two-level chain from the far end — the same hole
+   * the reverse guard in routes/playlists.js closes at add time. Refuse, and name the playlist, so
+   * the operator can see why rather than discovering a silently short playlist later.
+   */
+  if (sourceItems.some((a) => a.child_playlist_id)) {
+    const parent = db.prepare(`
+      SELECT p.name FROM playlist_items pi
+        JOIN playlists p ON p.id = pi.playlist_id
+       WHERE pi.child_playlist_id = ? LIMIT 1
+    `).get(targetPlaylistId);
+    if (parent) {
+      return res.status(400).json({
+        error: `The source contains a nested playlist, and the target device's playlist is already `
+          + `used inside "${parent.name}" — playlists may only nest one level deep.`,
+      });
+    }
+  }
+
+  const stmt = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec) VALUES (?, ?, ?, ?, ?, ?, ?)');
 
   const transaction = db.transaction(() => {
     sourceItems.forEach((a, i) => {
-      stmt.run(targetPlaylistId, a.content_id, a.widget_id, a.zone_id || null, maxOrder + i + 1, normalizeDuration(a.duration_sec));
+      stmt.run(targetPlaylistId, a.content_id, a.widget_id, a.child_playlist_id || null, a.zone_id || null, maxOrder + i + 1, resolveItemDuration(a.duration_sec, null));
     });
   });
   transaction();

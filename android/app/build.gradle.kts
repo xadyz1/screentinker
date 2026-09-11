@@ -9,12 +9,12 @@ android {
 
     defaultConfig {
         applicationId = "com.remotedisplay.player"
-        minSdk = 24
+        minSdk = 23
         targetSdk = 34
         // Env-overridable so device-owner reinstalls (which require an ever-increasing
         // versionCode — downgrades are blocked) don't churn this file each build.
-        versionCode = (System.getenv("VERSION_CODE") ?: findProperty("VERSION_CODE") as String? ?: "72").toInt()
-        versionName = System.getenv("VERSION_NAME") ?: findProperty("VERSION_NAME") as String? ?: "1.9.11"
+        versionCode = (System.getenv("VERSION_CODE") ?: findProperty("VERSION_CODE") as String? ?: "153").toInt()
+        versionName = System.getenv("VERSION_NAME") ?: findProperty("VERSION_NAME") as String? ?: "2.0.8"
     }
 
     signingConfigs {
@@ -43,6 +43,14 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // ScheduleEval uses java.time (Instant/LocalDate/ZoneId), which is API 26 — but minSdk is
+        // 24. Without desugaring, per-item dayparting/expiry threw NoClassDefFoundError on Android
+        // 7.0/7.1, which are still common on cheap signage sticks and older TV boxes. Because that
+        // is an Error and not an Exception, the evaluator's deliberate fail-open guard did not
+        // catch it: the playlist update aborted before content downloaded, and the cold-start path
+        // then cleared the playlist cache — so the screen sat on "waiting for content" and a reboot
+        // did not help.
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -63,6 +71,7 @@ android {
 }
 
 dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
     // AndroidX
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.appcompat:appcompat:1.6.1")
@@ -78,8 +87,24 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.2.1")
     implementation("androidx.media3:media3-ui:1.2.1")
 
-    // Socket.IO client
-    implementation("io.socket:socket.io-client:2.1.0")
+    // Socket.IO client.
+    //
+    // org.json is excluded deliberately. socket.io-client pulls org.json:json:20090211
+    // transitively, and that artifact was being packaged into the APK in full — 19 classes,
+    // including CDL, XML, JSONML and its own Test class. It carries the JSON License, whose
+    // "shall be used for Good, not Evil" clause is not OSI-approved, is treated as non-free by
+    // Debian and Fedora, and is Category X at Apache. Shipping it in a commercially distributed
+    // binary is an avoidable licensing problem: it is not copyleft, but it is not a licence we
+    // want to have to explain.
+    //
+    // Nothing is lost. Android provides org.json in the platform (since API 1, and minSdk is 24),
+    // and the only classes either side actually touches are JSONObject, JSONArray and JSONTokener.
+    // The full method surface used — by socket.io/engine.io and by our own Kotlin — is
+    // get/getString/getLong/getJSONArray/getJSONObject/has/keys/length/isNull/put/NULL,
+    // the opt* family, and JSONTokener.nextValue. Every one is platform API.
+    implementation("io.socket:socket.io-client:2.1.0") {
+        exclude(group = "org.json", module = "json")
+    }
 
     // WorkManager for background downloads
     implementation("androidx.work:work-runtime-ktx:2.9.0")
@@ -116,6 +141,10 @@ tasks.matching { it.name == "preBuild" || it.name.startsWith("merge") && it.name
 // that breaks a vector fails ScheduleEvalTest in CI.
 tasks.withType<Test> {
     systemProperty("scheduleVectors", File(rootProject.projectDir.parentFile, "shared/schedule-vectors.json").absolutePath)
+    // Same mechanism for the trigger fire path. ⚠️ That one decides whether an unauthenticated LAN
+    // packet changes what is on a screen, and it has two implementations in two languages — so the
+    // shared vectors are the contract and TriggerResolveTest holds this one to it.
+    systemProperty("triggerVectors", File(rootProject.projectDir.parentFile, "shared/trigger-vectors.json").absolutePath)
 }
 
 // #81: AGP ignores enableV1Signing at minSdk>=24, so `assembleRelease` produces a

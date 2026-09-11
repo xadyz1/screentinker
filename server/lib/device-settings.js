@@ -75,6 +75,22 @@ function snapshot(deviceId, now = Math.floor(Date.now() / 1000)) {
 function applyToDevice(deviceId, fingerprint) {
   const s = db.prepare('SELECT * FROM device_settings WHERE fingerprint = ?').get(fingerprint);
   if (!s) return null;
+
+  // A snapshot only ever applies inside the workspace it was taken in.
+  //
+  // The lookup keys on fingerprint alone, and a fingerprint is hardware-derived: the same panel
+  // moved between customers presents the same one. Without this comparison, a screen deleted from
+  // one workspace and paired into another inherited the FIRST workspace's playlist_id, blocked flag
+  // and team_id — and the per-field guards below did not stop it, because they only check that the
+  // referenced row still exists, never who it belongs to. The manual restore route already compares
+  // workspaces before calling this (routes/devices.js), so the automatic re-pair path was the one
+  // place the check was missing.
+  //
+  // Mismatch is a no-op, not an error: re-pairing a second-hand panel into a new workspace is a
+  // legitimate thing to do, it just must not drag the previous owner's configuration along.
+  const dev = db.prepare('SELECT workspace_id FROM devices WHERE id = ?').get(deviceId);
+  if (!dev) return null;
+  if (s.workspace_id && dev.workspace_id && s.workspace_id !== dev.workspace_id) return null;
   const sets = [], vals = [];
   const put = (col, val) => { sets.push(`${col} = ?`); vals.push(val); };
 
@@ -121,4 +137,23 @@ function purgeWorkspaces(dbConn, workspaceIds) {
   return (dbConn || db).prepare(`DELETE FROM device_settings WHERE workspace_id IN (${ph})`).run(...ids).changes;
 }
 
-module.exports = { snapshot, applyToDevice, listRemoved, getByFingerprint, purgeWorkspaces, validOrientation, ORIENTATIONS };
+/**
+ * Mirror a device's blocked flag onto its SAVED settings.
+ *
+ * applyToDevice deliberately restores `blocked` across a re-pair, so a block cannot be shrugged off
+ * by deleting the device. That is right — but it also means the saved copy is the real authority for
+ * anything that outlives the device row, and unblocking used to touch only `devices`. The saved copy
+ * stayed 1, so the very next delete-and-re-pair restored the block: from the operator's side, unblock
+ * simply did not take, and there was no way out of it from the dashboard at all.
+ *
+ * No-ops when the device has no fingerprint yet (nothing to key the saved row on).
+ */
+function setBlockedByDevice(deviceId, blocked) {
+  const fp = _fpForDevice.get(deviceId)?.fingerprint;
+  if (!fp) return false;
+  const r = db.prepare("UPDATE device_settings SET blocked = ?, last_seen = strftime('%s','now') WHERE fingerprint = ?")
+    .run(blocked ? 1 : 0, fp);
+  return r.changes > 0;
+}
+
+module.exports = { snapshot, applyToDevice, listRemoved, getByFingerprint, purgeWorkspaces, setBlockedByDevice, validOrientation, ORIENTATIONS };

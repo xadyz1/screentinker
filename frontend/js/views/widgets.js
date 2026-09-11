@@ -1,8 +1,49 @@
+import { api, assertLocalCallAllowed } from '../api.js';
 import { showToast } from '../components/toast.js';
 import { t } from '../i18n.js';
-import { hydrateAuthImages } from '../utils.js';
+import { openHistoryModal } from '../components/history-modal.js';
+import { renderApprovalBar } from '../components/approval-actions.js';
 
-const API = (url, opts = {}) => fetch('/api' + url, { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}`, ...opts.headers }, ...opts }).then(r => r.json());
+/*
+ * Real IANA zones for the clock widget's picker (#316). Intl.supportedValuesOf is the browser's own
+ * list; where it is missing (older WebViews) the field stays free text and the server still refuses
+ * an invalid value on save, so the worst case is the old behaviour minus the silent UTC fallback.
+ */
+function tzOptions() {
+  let zones = [];
+  try { zones = Intl.supportedValuesOf('timeZone') || []; } catch (_) { zones = []; }
+  return zones.map((z) => `<option value="${z}"></option>`).join('');
+}
+/*
+ * ⚠️ esc IS AN IMPORT, NOT A GLOBAL — and it was missing for sixteen days.
+ *
+ * The escaping sweep of 2026-08-11 added esc() to three sinks in this file and imported it in none
+ * of them, so every one of those lines threw ReferenceError the moment it ran: the image picker
+ * died before it could append itself (so "+ Add Background Image" and "Choose Logo" did NOTHING),
+ * and the Weather and Social config forms threw while building their HTML, so neither could be
+ * opened at all. A syntax check passes, every view still renders, and 2600 tests stayed green —
+ * the calls only run on a click. See test/frontend-shared-helpers.test.js.
+ */
+import { esc, hydrateAuthImages } from '../utils.js';
+
+// A refused request must reject, not resolve.
+//
+// This helper used to end in `.then(r => r.json())`, so a 403/404/500 body resolved as an ordinary
+// value and the surrounding try/catch was unreachable — every handler took the failure for success.
+// Concretely: deleting a built-in layout template showed "Layout deleted" while the server had
+// returned 403 and the template was still there, and a rejected platform-role change showed "Role
+// updated" while the dropdown kept displaying a value the server refused (its revert lives only in
+// the dead catch). The shared client in api.js has always thrown on !res.ok; these local copies did
+// not. Same contract now, including the 401 session-expiry reload.
+const API = (url, opts = {}) => {
+  // ⚠️ This helper bypasses api.js's routing, so it must ask the same question itself.
+  assertLocalCallAllowed(url, opts.method);
+  return fetch('/api' + url, { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}`, ...opts.headers }, ...opts }).then(async (r) => {
+  if (r.status === 401) { localStorage.removeItem('token'); window.location.reload(); throw new Error('Session expired'); }
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || `Request failed (${r.status})`); }
+  return r.json();
+  });
+};
 
 // Widget type ids only — name + desc are looked up via t() so they switch
 // language with the rest of the UI.
@@ -194,14 +235,36 @@ function parseDirectoryImport(text) {
   return res;
 }
 
+/*
+ * Pick images for a widget — and, when the one you want is not in the library yet, PUT IT THERE.
+ *
+ * ⚠️ THIS DIALOG USED TO BE READ-ONLY, AND ITS OWN EMPTY STATE ADMITTED IT: "Upload images first
+ * from Content Library". So choosing a directory-board background meant abandoning a half-filled
+ * widget form, crossing to another view, uploading, and coming back to start again — and "I
+ * couldn't upload a background picture" is precisely what that looks like from the operator's side.
+ * For anyone whose picture is still on their laptop, uploading IS the job of this dialog.
+ *
+ * ⚠️ AND IT ASKED THE SERVER FOR THE WRONG THING. `GET /content` with no query returns the 100
+ * newest rows OF EVERY TYPE (routes/content.js caps at 100 by default, 500 max), which this then
+ * filtered down to images on the client — so a workspace whose last hundred uploads were videos
+ * showed an EMPTY image picker while its library was full of images, and the search box could not
+ * find them either because it only ever filtered what had already been fetched. Ask the server for
+ * images, and ask it for as many as it will give.
+ */
 function openContentPicker({ multiple = false, title } = {}) {
   return new Promise(async (resolve) => {
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10000;padding:16px';
     overlay.innerHTML = `
-      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;width:100%;max-width:640px;max-height:90vh;display:flex;flex-direction:column">
-        <h3 style="margin:0 0 12px;color:var(--text-primary)">${title || t('widget.picker.default_title')}</h3>
-        <input type="text" id="cpSearch" class="input" placeholder="${t('widget.picker.search')}" style="margin-bottom:12px">
+      <div id="cpBox" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;width:100%;max-width:640px;max-height:90vh;display:flex;flex-direction:column">
+        <h3 style="margin:0 0 12px;color:var(--text-primary)">${esc(title || t('widget.picker.default_title'))}</h3>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
+          <input type="text" id="cpSearch" class="input" placeholder="${t('widget.picker.search')}" style="flex:1;min-width:150px;margin:0">
+          <button type="button" class="btn btn-secondary btn-sm" id="cpUploadBtn">${t('widget.picker.upload')}</button>
+          <input type="file" id="cpFile" accept="image/*" ${multiple ? 'multiple' : ''} hidden>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">${t('widget.picker.drop_hint')}</div>
+        <div id="cpStatus" style="display:none;font-size:12px;margin-bottom:8px"></div>
         <div id="cpList" style="flex:1;overflow-y:auto;min-height:200px"></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;gap:8px;flex-wrap:wrap">
           <div style="font-size:12px;color:var(--text-muted)" id="cpSelCount"></div>
@@ -214,34 +277,53 @@ function openContentPicker({ multiple = false, title } = {}) {
     document.body.appendChild(overlay);
 
     let items = [];
-    try { items = await API('/content'); } catch {}
-    items = (items || []).filter(i => (i.mime_type || '').startsWith('image/'));
-
+    let uploading = false;
     const selected = new Set();
     const resolveUrl = (item) => item.remote_url || `/api/content/${item.id}/file`;
     const updateCount = () => {
       const el = overlay.querySelector('#cpSelCount');
       if (el && multiple) el.textContent = t('widget.picker.selected_count', { n: selected.size });
     };
+    function setStatus(msg, kind) {
+      const el = overlay.querySelector('#cpStatus');
+      if (!el) return;
+      el.textContent = msg || '';
+      el.style.color = kind === 'error' ? '#ff6b6b' : 'var(--text-muted)';
+      el.style.display = msg ? 'block' : 'none';
+    }
+
+    // The selected state of ONE tile, changed in place.
+    //
+    // ⚠️ Not a re-render. renderList() rebuilds the grid, which re-hydrates every authenticated
+    // thumbnail and drops the scroll position back to the top — so picking a fourth background
+    // image threw the operator back to the first row every time.
+    function paintTile(el, id) {
+      const isSel = selected.has(id);
+      el.style.borderColor = isSel ? 'var(--primary, #4a7cff)' : 'transparent';
+      const badge = el.querySelector('[data-check]');
+      if (badge) badge.style.display = isSel ? 'flex' : 'none';
+    }
 
     function renderList() {
-      const q = (overlay.querySelector('#cpSearch').value || '').toLowerCase();
+      const searchEl = overlay.querySelector('#cpSearch');
+      const q = ((searchEl && searchEl.value) || '').toLowerCase();
       const filtered = items.filter(i => (i.filename || '').toLowerCase().includes(q));
       const list = overlay.querySelector('#cpList');
+      if (!list) return;
       if (!filtered.length) {
         list.innerHTML = `<div style="color:var(--text-muted);padding:32px;text-align:center;font-size:13px">${items.length ? t('widget.picker.no_matches') : t('widget.picker.no_images')}</div>`;
         return;
       }
       list.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px">${
         filtered.map(c => {
-          const isSel = selected.has(c.id);
+          const isSel = selected.has(String(c.id));
           const isRemote = !!c.remote_url;
           const thumb = c.remote_url || `/api/content/${c.id}/thumbnail`;
           return `
             <div data-pick-id="${escAttr(c.id)}" style="position:relative;cursor:pointer;border-radius:6px;overflow:hidden;border:2px solid ${isSel ? 'var(--primary, #4a7cff)' : 'transparent'};aspect-ratio:4/3;background:var(--bg-input)">
               <img ${isRemote ? `src="${escAttr(thumb)}"` : `data-auth-src="${escAttr(thumb)}"`} style="width:100%;height:100%;object-fit:cover" loading="lazy" onerror="this.style.opacity='0.2'">
               <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.75);color:#fff;padding:4px 6px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escAttr(c.filename)}</div>
-              ${isSel ? '<div style="position:absolute;top:6px;right:6px;width:22px;height:22px;background:var(--primary, #4a7cff);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;line-height:1">&#10003;</div>' : ''}
+              <div data-check style="display:${isSel ? 'flex' : 'none'};position:absolute;top:6px;right:6px;width:22px;height:22px;background:var(--primary, #4a7cff);color:#fff;border-radius:50%;align-items:center;justify-content:center;font-size:14px;line-height:1">&#10003;</div>
             </div>`;
         }).join('')
       }</div>`;
@@ -250,8 +332,8 @@ function openContentPicker({ multiple = false, title } = {}) {
         const id = el.dataset.pickId;
         if (multiple) {
           if (selected.has(id)) selected.delete(id); else selected.add(id);
+          paintTile(el, id);
           updateCount();
-          renderList();
         } else {
           const item = items.find(x => String(x.id) === id);
           if (item) { cleanup(); resolve(resolveUrl(item)); }
@@ -259,10 +341,63 @@ function openContentPicker({ multiple = false, title } = {}) {
       });
     }
 
+    /*
+     * Upload straight into the library from here.
+     *
+     * ⚠️ Goes through api.uploadContent, never a bare fetch/XHR: that helper is the one that asks
+     * remoteRoute whether we are looking at a LINKED server, and an upload that skips the question
+     * lands silently in your own workspace under a heading that says someone else's.
+     */
+    async function uploadFiles(fileList) {
+      if (uploading) return;
+      const all = Array.from(fileList || []);
+      const picked = all.filter(f => (f.type || '').startsWith('image/'));
+      if (!picked.length) { setStatus(t('widget.picker.not_an_image'), 'error'); return; }
+      uploading = true;
+      setStatus(t('widget.picker.uploading'));
+      try {
+        const r = await api.uploadContent(multiple ? picked : [picked[0]],
+          (pct) => setStatus(t('widget.picker.uploading_pct', { pct })));
+        const added = (Array.isArray(r) ? r : [r]).filter(Boolean);
+        if (!added.length) throw new Error(t('widget.picker.upload_failed'));
+        items = added.concat(items);   // newest first, the order the server itself returns
+        setStatus('');
+        if (!multiple) {
+          // A single-image dialog has nothing left to ask — the operator just chose the file.
+          cleanup();
+          resolve(resolveUrl(added[0]));
+          return;
+        }
+        for (const c of added) selected.add(String(c.id));
+        // A stale filter must never hide the file that was just uploaded.
+        const s = overlay.querySelector('#cpSearch');
+        if (s) s.value = '';
+        updateCount();
+        renderList();
+      } catch (e) {
+        // The server's own words — "Unsupported file type", a storage-limit refusal — or nothing.
+        setStatus((e && e.message) || t('widget.picker.upload_failed'), 'error');
+      } finally {
+        uploading = false;
+        const f = overlay.querySelector('#cpFile');
+        if (f) f.value = '';   // so re-picking the SAME file fires change again
+      }
+    }
+
     function cleanup() { overlay.remove(); }
 
     overlay.querySelector('#cpSearch').oninput = renderList;
     overlay.querySelector('#cpCancel').onclick = () => { cleanup(); resolve(multiple ? [] : null); };
+    overlay.querySelector('#cpUploadBtn').onclick = () => overlay.querySelector('#cpFile').click();
+    overlay.querySelector('#cpFile').onchange = (e) => uploadFiles(e.target.files);
+    const box = overlay.querySelector('#cpBox');
+    box.addEventListener('dragover', (e) => { e.preventDefault(); box.style.outline = '2px dashed var(--primary, #4a7cff)'; });
+    box.addEventListener('dragleave', () => { box.style.outline = ''; });
+    box.addEventListener('drop', (e) => {
+      e.preventDefault();
+      box.style.outline = '';
+      uploadFiles(e.dataTransfer && e.dataTransfer.files);
+    });
     if (multiple) {
       overlay.querySelector('#cpDone').onclick = () => {
         const urls = Array.from(selected).map(id => {
@@ -275,6 +410,11 @@ function openContentPicker({ multiple = false, title } = {}) {
     }
     overlay.onclick = (e) => { if (e.target === overlay) { cleanup(); resolve(multiple ? [] : null); } };
     updateCount();
+    renderList();
+
+    // ⚠️ Images, and the server's maximum — see the note above this function.
+    try { items = await API('/content?type=image&limit=500'); } catch { items = []; }
+    items = (items || []).filter(i => (i.mime_type || '').startsWith('image/'));
     renderList();
   });
 }
@@ -294,6 +434,15 @@ function showPreviewModal(sessionId, widgetType) {
         <strong style="color:var(--text-primary)">${t('widget.preview_title')}</strong>
         <button class="btn btn-secondary btn-sm" id="pvClose">${t('widget.close')}</button>
       </div>
+      <!-- ALWAYS 'allow-scripts', never allow-same-origin, regardless of the org's
+           widget_sandbox_isolation_disabled setting. This preview loads
+           /api/widgets/preview-session/<id> from the DASHBOARD's own origin, and the
+           dashboard keeps its session JWT in localStorage.token. Granting same-origin
+           here would let anyone who can author a widget (workspace_editor and up) run
+           script in the dashboard origin and read the session of whichever admin opens
+           the preview — an editor -> admin escalation. The org setting exists to let
+           PLAYERS embed origin-strict sites; it is not a licence to de-isolate the
+           dashboard. Covered by widget-preview-stays-isolated.test.js. -->
       <iframe id="pvIframe" sandbox="allow-scripts" style="flex:1;width:100%;border:0;background:#000"></iframe>
       ${webpageNote}
     </div>`;
@@ -380,17 +529,22 @@ export async function render(container) {
       case 'clock':
         html += `
           <div class="form-group"><label>${t('widget.field.format')}</label><select id="wFormat" class="input" style="background:var(--bg-input)"><option value="12h" ${config.format === '12h' ? 'selected' : ''}>${t('widget.field.format_12h')}</option><option value="24h" ${config.format === '24h' ? 'selected' : ''}>${t('widget.field.format_24h')}</option></select></div>
-          <div class="form-group"><label>${t('widget.field.timezone')}</label><input type="text" id="wTimezone" class="input" value="${config.timezone || 'America/Chicago'}" placeholder="America/New_York"></div>
+          <div class="form-group"><label>${t('widget.field.timezone')}</label><input type="text" id="wTimezone" class="input" list="tzList" value="${config.timezone || 'America/Chicago'}" placeholder="America/New_York"><datalist id="tzList">${tzOptions()}</datalist><div class="form-hint" id="wTimezoneHint" style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.field.timezone_hint')}</div></div>
+          <div class="form-group"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="wShowSeconds" ${config.show_seconds === false ? '' : 'checked'}> ${t('widget.field.show_seconds')}</label></div>
+          <div class="form-group"><label>${t('widget.field.locale')}</label><input type="text" id="wLocale" class="input" value="${config.locale || ''}" placeholder="es-ES"><div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.field.locale_hint')}</div></div>
           <div class="form-group"><label>${t('widget.field.font_size_px')}</label><input type="number" id="wFontSize" class="input" value="${config.font_size || 64}"></div>
           <div class="form-group"><label>${t('widget.field.color')}</label><input type="color" id="wColor" value="${config.color || '#FFFFFF'}" style="width:60px;height:32px;border:none"></div>
           <div class="form-group"><label>${t('widget.field.background')}</label><input type="color" id="wBg" value="${config.background || '#000000'}" style="width:60px;height:32px;border:none"></div>`;
         break;
       case 'weather':
         html += `
-          <div class="form-group"><label>${t('widget.field.location')}</label><input type="text" id="wLocation" class="input" value="${config.location || ''}" placeholder="${t('widget.field.location_placeholder')}"></div>
+          <div class="form-group"><label>${t('widget.field.location')}</label><input type="text" id="wLocation" class="input" value="${esc(config.location || '')}" placeholder="${t('widget.field.location_placeholder')}"></div>
           <div class="form-group"><label>${t('widget.field.units')}</label><select id="wUnits" class="input" style="background:var(--bg-input)"><option value="imperial" ${config.units !== 'metric' ? 'selected' : ''}>${t('widget.field.units_imperial')}</option><option value="metric" ${config.units === 'metric' ? 'selected' : ''}>${t('widget.field.units_metric')}</option></select></div>
           <div class="form-group"><label>${t('widget.field.font_size')}</label><input type="number" id="wFontSize" class="input" value="${config.font_size || 48}"></div>
-          <div class="form-group"><label>${t('widget.field.color')}</label><input type="color" id="wColor" value="${config.color || '#FFFFFF'}" style="width:60px;height:32px;border:none"></div>`;
+          <div class="form-group"><label>${t('widget.field.color')}</label><input type="color" id="wColor" value="${config.color || '#FFFFFF'}" style="width:60px;height:32px;border:none"></div>
+          <div class="form-group"><label>${t('widget.field.layout')}</label><select id="wLayout" class="input" style="background:var(--bg-input)"><option value="vertical" ${config.layout !== 'horizontal' ? 'selected' : ''}>${t('widget.field.layout_vertical')}</option><option value="horizontal" ${config.layout === 'horizontal' ? 'selected' : ''}>${t('widget.field.layout_horizontal')}</option></select></div>
+          <div class="form-group"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="wShowLocation" ${config.show_location === false ? '' : 'checked'}> ${t('widget.field.show_location')}</label></div>
+          <div class="form-group"><label>${t('widget.field.locale')}</label><input type="text" id="wWeatherLocale" class="input" value="${config.locale || ''}" placeholder="es"><div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.field.weather_locale_hint')}</div></div>`;
         break;
       case 'rss':
         html += `
@@ -416,7 +570,7 @@ export async function render(container) {
       case 'social':
         html += `
           <div class="form-group"><label>${t('widget.field.platform')}</label><select id="wPlatform" class="input" style="background:var(--bg-input)"><option value="twitter">${t('widget.field.platform_twitter')}</option><option value="instagram">${t('widget.field.platform_instagram')}</option></select></div>
-          <div class="form-group"><label>${t('widget.field.query')}</label><input type="text" id="wQuery" class="input" value="${config.query || ''}" placeholder="${t('widget.field.query_placeholder')}"></div>`;
+          <div class="form-group"><label>${t('widget.field.query')}</label><input type="text" id="wQuery" class="input" value="${esc(config.query || '')}" placeholder="${t('widget.field.query_placeholder')}"></div>`;
         break;
       case 'directory-board':
         html += `
@@ -481,6 +635,11 @@ export async function render(container) {
         html += `
           <div class="form-group"><label>${t('widget.trans.shader')}</label>
             <div id="wTransList" style="max-height:158px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:4px;background:var(--bg-input)"></div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+              <button type="button" class="btn btn-secondary btn-sm" id="wTransUpload">${t('widget.trans.upload')}</button>
+              <input type="file" id="wTransUploadFile" accept=".glsl,text/plain" style="display:none">
+              <span style="font-size:12px;color:var(--text-muted)">${t('widget.trans.upload_hint')}</span>
+            </div>
             <div class="hint" style="font-size:11px;color:var(--text-muted);margin-top:6px">${t('widget.trans.multi_hint')}</div>
             <div id="wTransBlurb" style="font-size:11px;color:var(--text-muted);margin-top:4px"></div></div>
           <div class="form-group">
@@ -580,9 +739,45 @@ export async function render(container) {
     const paramsBox = document.getElementById('wTransParams');
     if (!canvas || !list) return;
 
+    // #320: upload your own. A .glsl file is read in the browser and posted as text; the server
+    // validates shape and size and reads the name and blurb out of the header comments exactly as
+    // generate-manifest.js does for the shipped set.
+    const upBtn = document.getElementById('wTransUpload');
+    const upFile = document.getElementById('wTransUploadFile');
+    if (upBtn && upFile && !upBtn.dataset.wired) {
+      upBtn.dataset.wired = '1';
+      upBtn.addEventListener('click', () => upFile.click());
+      upFile.addEventListener('change', async () => {
+        const f = upFile.files && upFile.files[0];
+        if (!f) return;
+        try {
+          const text = await f.text();
+          await api.uploadCustomShader(text, f.name.replace(/\.glsl$/i, ''));
+          showToast(t('widget.trans.uploaded'), 'success');
+          initTransitionForm(config);   // re-read the list so it appears in the picker
+        } catch (e) {
+          showToast(e.message, 'error');   // the server's own words: why it was refused
+        } finally { upFile.value = ''; }
+      });
+    }
+
     const ready = await ensureTransitionRuntime();
     if (!ready || !window.__TRANSITION_MANIFEST) { blurb.textContent = t('widget.trans.unavailable'); return; }
-    const MAN = window.__TRANSITION_MANIFEST;
+    /*
+     * #320: the workspace's uploaded shaders join the shipped manifest for the picker and the live
+     * preview. Appended, never merged over: a built-in with the same id would win, and the server
+     * prefixes uploads `custom-` so the case cannot arise anyway. A failure to load them leaves the
+     * shipped set working, because a picker with fourteen effects beats an error dialog.
+     */
+    const MAN = window.__TRANSITION_MANIFEST.slice();
+    try {
+      const customs = await api.listCustomShaders();
+      for (const c of customs || []) {
+        if (MAN.some((m) => m.id === c.shader_id)) continue;
+        MAN.push({ id: c.shader_id, name: c.name, blurb: c.blurb || '', params: c.params || [], custom: true });
+        if (c.source && window.__TRANSITION_SHADERS) window.__TRANSITION_SHADERS[c.shader_id] = c.source;
+      }
+    } catch (e) { /* shipped set only */ }
     const byId = (id) => MAN.find((x) => x.id === id);
 
     // initial selection: config.shaders, else legacy single config.shader, else the first effect
@@ -915,8 +1110,16 @@ export async function render(container) {
     const config = {};
     const val = id => document.getElementById(id)?.value;
     switch (type) {
-      case 'clock': Object.assign(config, { format: val('wFormat'), timezone: val('wTimezone'), font_size: parseInt(val('wFontSize')) || 64, color: val('wColor'), background: val('wBg'), show_date: true }); break;
-      case 'weather': Object.assign(config, { location: val('wLocation'), units: val('wUnits'), font_size: parseInt(val('wFontSize')) || 48, color: val('wColor') }); break;
+      case 'clock': Object.assign(config, { format: val('wFormat'), timezone: val('wTimezone'), font_size: parseInt(val('wFontSize')) || 64, color: val('wColor'), background: val('wBg'), show_date: true,
+        // #323: seconds were always on with no way to turn them off, and the clock was formatted
+        // in en-US regardless of the operator's language. Both are settings now.
+        show_seconds: document.getElementById('wShowSeconds') ? document.getElementById('wShowSeconds').checked : true,
+        locale: (val('wLocale') || '').trim() }); break;
+      case 'weather': Object.assign(config, { location: val('wLocation'), units: val('wUnits'), font_size: parseInt(val('wFontSize')) || 48, color: val('wColor'),
+        // #324: layout, an optional city line, and a language for the condition text.
+        layout: val('wLayout') || 'vertical',
+        show_location: document.getElementById('wShowLocation') ? document.getElementById('wShowLocation').checked : true,
+        locale: (val('wWeatherLocale') || '').trim() }); break;
       case 'rss': Object.assign(config, { feed_url: val('wFeedUrl'), scroll_speed: parseInt(val('wScrollSpeed')) || 30, max_items: parseInt(val('wMaxItems')) || 10, font_size: parseInt(val('wFontSize')) || 24, color: val('wColor'), background: val('wBg') }); break;
       case 'text': Object.assign(config, { html: val('wHtml'), css: val('wCss'), background: val('wBg') }); break;
       case 'webpage': Object.assign(config, { url: val('wUrl'), zoom: parseInt(val('wZoom')) || 100, refresh_interval: parseInt(val('wRefresh')) || 0 }); break;
@@ -968,13 +1171,14 @@ export async function render(container) {
     const name = document.getElementById('wName').value;
     const config = getConfigFromForm(type);
     try {
+      let saved;
       if (editingWidget) {
-        await API(`/widgets/${editingWidget.id}`, { method: 'PUT', body: JSON.stringify({ name, config }) });
+        saved = await API(`/widgets/${editingWidget.id}`, { method: 'PUT', body: JSON.stringify({ name, config }) });
       } else {
-        await API('/widgets', { method: 'POST', body: JSON.stringify({ widget_type: type, name, config }) });
+        saved = await API('/widgets', { method: 'POST', body: JSON.stringify({ widget_type: type, name, config }) });
       }
       document.getElementById('widgetModal').style.display = 'none';
-      showToast(t('widget.toast.saved'), 'success');
+      showToast(saved && saved.pending_review ? t('review.toast.saved_as_draft') : t('widget.toast.saved'), 'success');
       loadWidgets();
     } catch (err) { showToast(err.message, 'error'); }
   };
@@ -1017,18 +1221,46 @@ export async function render(container) {
           </div>
           <div class="content-item-actions">
             <button class="btn btn-secondary btn-sm" data-edit-widget="${escAttr(w.id)}">${t('common.edit')}</button>
+            <button class="btn btn-secondary btn-sm" data-history-widget="${escAttr(w.id)}" title="${t('history.button')}">${t('history.button')}</button>
             <button class="btn btn-danger btn-sm" data-delete-widget="${escAttr(w.id)}">${t('common.delete')}</button>
           </div>
+          <div data-approval-widget="${escAttr(w.id)}" style="padding:0 12px 10px"></div>
         </div>
       `;
     }).join('');
 
+    // Draft / review state per card. Only widgets with a pending draft or open submission render
+    // anything beyond History, so the grid stays quiet when approval is off.
+    for (const w of widgets) {
+      const host = grid.querySelector(`[data-approval-widget="${CSS.escape(w.id)}"]`);
+      if (host) renderApprovalBar(host, { type: 'widget', id: w.id, name: w.name, onChanged: () => loadWidgets() }).then(() => {
+        // Hide the History button the bar renders; the card already has one.
+        const hb = host.querySelector('[data-history]'); if (hb) hb.remove();
+        if (!host.textContent.trim()) host.style.display = 'none';
+      });
+    }
     grid.onclick = async (e) => {
+      const histBtn = e.target.closest('[data-history-widget]');
+      if (histBtn) {
+        const w = widgets.find(x => x.id === histBtn.dataset.historyWidget);
+        openHistoryModal('widget', histBtn.dataset.historyWidget, { name: w?.name, onChanged: () => loadWidgets() });
+        return;
+      }
       const editBtn = e.target.closest('[data-edit-widget]');
       if (editBtn) {
         const w = widgets.find(x => x.id === editBtn.dataset.editWidget);
         if (w) {
-          const config = JSON.parse(w.config || '{}');
+          /*
+           * ⚠️ THE DRAFT IS WHAT THE EDITOR MUST SHOW, when there is one.
+           *
+           * Under workspace approval a save does not touch `config`; the server parks it in
+           * `draft_config` as {name, config} and the live widget keeps playing. Reading `config`
+           * here reopened the editor on the LIVE version, so the author's saved-but-unreviewed
+           * work looked lost - and saving again posted the stale form back, silently overwriting
+           * the pending draft and any submission built on it.
+           */
+          const draft = w.draft_config ? (() => { try { return JSON.parse(w.draft_config); } catch { return null; } })() : null;
+          const config = draft ? (draft.config || {}) : JSON.parse(w.config || '{}');
           // Reopen designer-made widgets IN the designer for visual editing instead of the raw HTML form.
           // New designs carry a `design` source; legacy ones (HTML only) are detected by the designer's
           // signature output (every element is absolutely positioned) — the designer reconstructs their
@@ -1041,7 +1273,7 @@ export async function render(container) {
           }
           editingWidget = w;
           creatingType = w.widget_type;
-          config._name = w.name;
+          config._name = draft && draft.name ? draft.name : w.name;
           showConfigForm(w.widget_type, config);
         }
         return;

@@ -40,13 +40,29 @@ class SetupActivity : AppCompatActivity() {
     private lateinit var enableWriteSettingsBtn: Button
     private lateinit var continueBtn: Button
 
+    /**
+     * Opened from the in-service Settings menu to REVIEW permissions, not as first-run setup.
+     *
+     * The difference matters: proceedToNext() always goes to ProvisioningActivity, so without this
+     * a paired, playing screen would be sent to the pairing page by the button it was told to press.
+     * In manage mode the screen simply returns to the player.
+     */
+    private val manageOnly: Boolean get() = intent?.getBooleanExtra(EXTRA_MANAGE_ONLY, false) == true
+
+    companion object {
+        const val EXTRA_MANAGE_ONLY = "EXTRA_MANAGE_ONLY"
+    }
+
     @SuppressLint("BatteryLife")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Skip setup if already completed
+        // Skip setup if already completed — but NOT when we were opened deliberately to review
+        // permissions from the in-service Settings menu. That is the whole point of manage mode:
+        // every device that can reach it has setup_complete set, so without this exemption the
+        // screen closes before it draws and the menu entry appears to do nothing.
         val prefs = getSharedPreferences("remote_display", MODE_PRIVATE)
-        if (prefs.getBoolean("setup_complete", false)) {
+        if (!manageOnly && prefs.getBoolean("setup_complete", false)) {
             proceedToNext()
             return
         }
@@ -56,7 +72,7 @@ class SetupActivity : AppCompatActivity() {
         // moot — so skip the entire manual first-run wizard. Accessibility stays optional (it can't
         // be auto-enabled). Guarded on ownership, so a NORMAL install still gets the full wizard.
         val ownerPolicy = com.remotedisplay.player.admin.STPolicy(this)
-        if (ownerPolicy.isDeviceOwner()) {
+        if (!manageOnly && ownerPolicy.isDeviceOwner()) {
             ownerPolicy.applyOnboardingPolicy()
             prefs.edit().putBoolean("setup_complete", true).apply()
             // Remote control needs the accessibility service, and it's the one thing no policy can
@@ -98,9 +114,22 @@ class SetupActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             findViewById<View>(R.id.notificationRow).visibility = View.VISIBLE
             findViewById<Button>(R.id.enableNotificationBtn).setOnClickListener {
-                ActivityCompat.requestPermissions(
-                    this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 100
-                )
+                val granted = ContextCompat.checkSelfPermission(
+                    this, Manifest.permission.POST_NOTIFICATIONS
+                ) == PackageManager.PERMISSION_GRANTED
+                if (granted) {
+                    // requestPermissions() does nothing once the answer is already given, so it
+                    // cannot be the way back. App notification settings can toggle it either way.
+                    try {
+                        startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                            putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                        })
+                    } catch (_: Exception) { openAppSettings() }
+                } else {
+                    ActivityCompat.requestPermissions(
+                        this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 100
+                    )
+                }
             }
         }
 
@@ -147,6 +176,18 @@ class SetupActivity : AppCompatActivity() {
         // Default launcher / HOME: a kiosk MUST be the default launcher, else Android returns to the
         // stock launcher and tears down + recreates the player on a loop (it never renders). Request
         // the HOME role (clean system dialog on API 29+); fall back to the Home-app picker in Settings.
+        // OPTIONAL: location, solely so the device page can show the Wi-Fi network name. Requested
+        // only when someone taps this row — never at startup, and nothing else in the player depends
+        // on it. Once granted (or permanently denied) requestPermissions() stops prompting, so an
+        // already-answered row sends you to app settings where it can be changed either way.
+        findViewById<Button>(R.id.enableLocationBtn).setOnClickListener {
+            if (hasLocationPermission()) openAppSettings()
+            else ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+                101
+            )
+        }
         findViewById<Button>(R.id.enableLauncherBtn).setOnClickListener { promptSetDefaultLauncher() }
 
         // Launch-on-boot needs USE_FULL_SCREEN_INTENT, which Android 14+ auto-revokes
@@ -173,17 +214,35 @@ class SetupActivity : AppCompatActivity() {
         // Battery-optimization exemption keeps the boot receiver from being deferred
         // and the app from being killed in standby (esp. on OEM / TV boxes).
         enableBatteryBtn.setOnClickListener {
-            try {
-                startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                    data = Uri.parse("package:$packageName")
-                })
-            } catch (e: Exception) {
-                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            val exempt = (getSystemService(Context.POWER_SERVICE) as PowerManager)
+                .isIgnoringBatteryOptimizations(packageName)
+            if (exempt) {
+                // ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS only ASKS to add an exemption — it
+                // offers no way to remove one, so it is a dead end for someone already exempt.
+                // The system list is where an exemption can actually be turned back off.
+                try { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+                catch (_: Exception) { openAppSettings() }
+            } else {
+                try {
+                    startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = Uri.parse("package:$packageName")
+                    })
+                } catch (e: Exception) {
+                    try { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+                    catch (_: Exception) { openAppSettings() }
+                }
             }
         }
 
+        if (manageOnly) {
+            // "Continue anyway" and the skip hint are first-run language; here the only action is
+            // to go back to what was already playing.
+            continueBtn.text = getString(R.string.settings_perm_done)
+            findViewById<TextView>(R.id.skipText).visibility = View.GONE
+        }
+
         continueBtn.setOnClickListener {
-            prefs.edit().putBoolean("setup_complete", true).apply()
+            if (!manageOnly) prefs.edit().putBoolean("setup_complete", true).apply()
             proceedToNext()
         }
 
@@ -200,6 +259,30 @@ class SetupActivity : AppCompatActivity() {
         updateStatuses()
     }
 
+    /**
+     * Bind a permission row's button. Granted rows used to set the button GONE, which left the
+     * choice one-way: every permission on this screen is granted in system Settings and the app
+     * cannot revoke any of them itself, so hiding the only route to that screen meant there was no
+     * way back. Reported on #234 — "if I make the app as Home launcher but later on want to remove
+     * it then how can I do it?".
+     *
+     * The button now stays put and relabels. Same tap target, same destination; the label is honest
+     * that Settings is where the change happens rather than promising we can revoke it ourselves.
+     */
+    private fun bindPermissionButton(btn: Button, granted: Boolean, enableLabel: String) {
+        btn.visibility = View.VISIBLE
+        btn.text = if (granted) "Manage" else enableLabel
+    }
+
+    /** Last-resort destination: this app's own settings page, where everything can be reached. */
+    private fun openAppSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:$packageName")
+            })
+        } catch (_: Exception) { try { startActivity(Intent(Settings.ACTION_SETTINGS)) } catch (_: Exception) {} }
+    }
+
     private fun updateStatuses() {
         // Accessibility
         val accessibilityEnabled = isAccessibilityEnabled()
@@ -207,7 +290,7 @@ class SetupActivity : AppCompatActivity() {
         accessibilityStatus.setTextColor(
             if (accessibilityEnabled) 0xFF22C55E.toInt() else 0xFFEF4444.toInt()
         )
-        enableAccessibilityBtn.visibility = if (accessibilityEnabled) View.GONE else View.VISIBLE
+        bindPermissionButton(enableAccessibilityBtn, accessibilityEnabled, "Enable")
 
         // Install unknown apps
         val canInstall = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -217,7 +300,7 @@ class SetupActivity : AppCompatActivity() {
         installStatus.setTextColor(
             if (canInstall) 0xFF22C55E.toInt() else 0xFFEF4444.toInt()
         )
-        enableInstallBtn.visibility = if (canInstall) View.GONE else View.VISIBLE
+        bindPermissionButton(enableInstallBtn, canInstall, "Enable")
 
         // Notifications (Android 13+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -228,8 +311,7 @@ class SetupActivity : AppCompatActivity() {
             notificationStatus.setTextColor(
                 if (hasNotif) 0xFF22C55E.toInt() else 0xFFEF4444.toInt()
             )
-            findViewById<Button>(R.id.enableNotificationBtn).visibility =
-                if (hasNotif) View.GONE else View.VISIBLE
+            bindPermissionButton(findViewById(R.id.enableNotificationBtn), hasNotif, "Enable")
         }
 
         // Launch on boot (full-screen intent — only restrictable on Android 14+)
@@ -237,7 +319,7 @@ class SetupActivity : AppCompatActivity() {
             val canFsi = getSystemService(NotificationManager::class.java).canUseFullScreenIntent()
             fullscreenStatus.text = if (canFsi) "ON" else "OFF"
             fullscreenStatus.setTextColor(if (canFsi) 0xFF22C55E.toInt() else 0xFFEF4444.toInt())
-            enableFullscreenBtn.visibility = if (canFsi) View.GONE else View.VISIBLE
+            bindPermissionButton(enableFullscreenBtn, canFsi, "Enable")
         }
 
         // Battery optimization exemption
@@ -245,33 +327,66 @@ class SetupActivity : AppCompatActivity() {
             .isIgnoringBatteryOptimizations(packageName)
         batteryStatus.text = if (ignoringBattery) "ON" else "OFF"
         batteryStatus.setTextColor(if (ignoringBattery) 0xFF22C55E.toInt() else 0xFFEF4444.toInt())
-        enableBatteryBtn.visibility = if (ignoringBattery) View.GONE else View.VISIBLE
+        bindPermissionButton(enableBatteryBtn, ignoringBattery, "Enable")
 
         // Display over other apps
         val canOverlay = Settings.canDrawOverlays(this)
         overlayStatus.text = if (canOverlay) "ON" else "OFF"
         overlayStatus.setTextColor(if (canOverlay) 0xFF22C55E.toInt() else 0xFFEF4444.toInt())
-        enableOverlayBtn.visibility = if (canOverlay) View.GONE else View.VISIBLE
+        bindPermissionButton(enableOverlayBtn, canOverlay, "Enable")
 
         // #160 WRITE_SETTINGS (system brightness / screen-off timeout)
         val canWrite = Settings.System.canWrite(this)
         writeSettingsStatus.text = if (canWrite) "ON" else "OFF"
         writeSettingsStatus.setTextColor(if (canWrite) 0xFF22C55E.toInt() else 0xFFEF4444.toInt())
-        enableWriteSettingsBtn.visibility = if (canWrite) View.GONE else View.VISIBLE
+        bindPermissionButton(enableWriteSettingsBtn, canWrite, "Enable")
+
+        // Optional Wi-Fi-name permission
+        val hasLoc = hasLocationPermission()
+        val locationStatus = findViewById<TextView>(R.id.locationStatus)
+        locationStatus.text = if (hasLoc) "ON" else "OFF"
+        locationStatus.setTextColor(if (hasLoc) 0xFF22C55E.toInt() else 0xFF64748B.toInt())
+        bindPermissionButton(findViewById(R.id.enableLocationBtn), hasLoc, "Enable")
 
         // Default launcher (HOME): kiosk foreground stability requires being the default launcher.
         val isDefaultHome = isDefaultLauncher()
         val launcherStatus = findViewById<TextView>(R.id.launcherStatus)
         launcherStatus.text = if (isDefaultHome) "ON" else "OFF"
         launcherStatus.setTextColor(if (isDefaultHome) 0xFF22C55E.toInt() else 0xFFEF4444.toInt())
-        findViewById<Button>(R.id.enableLauncherBtn).visibility = if (isDefaultHome) View.GONE else View.VISIBLE
+        bindPermissionButton(findViewById(R.id.enableLauncherBtn), isDefaultHome, "Set")
 
         // Update continue button text
         val allGood = accessibilityEnabled && canInstall
-        continueBtn.text = if (allGood) "Continue to Setup" else "Continue Anyway"
+        // updateStatuses() runs after onCreate's setup and re-labels this button every time, so the
+        // manage-mode label has to be honoured HERE too — setting it once earlier was silently
+        // overwritten. In review mode there is nothing to continue TO; the only action is going back.
+        continueBtn.text = when {
+            manageOnly -> getString(R.string.settings_perm_done)
+            allGood -> "Continue to Setup"
+            else -> "Continue Anyway"
+        }
     }
 
+    /** Either location permission is enough for the SSID; coarse suffices below Android 10. */
+    private fun hasLocationPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
     private fun isDefaultLauncher(): Boolean {
+        // Ask the SAME authority the action uses. This used to read resolveActivity(MATCH_DEFAULT_ONLY),
+        // which can name us when we are merely a HOME candidate rather than the chosen home app — so
+        // the row could say ON while the system still had the OEM launcher as home, and the button
+        // then opened the "become home" request dialog instead of the picker. Reported on #234:
+        // "in the apk I have granted the permission ... BUT in the settings of the tablet it still
+        // shows the tablet native launcher as home."
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                val rm = getSystemService(android.app.role.RoleManager::class.java)
+                if (rm != null && rm.isRoleAvailable(android.app.role.RoleManager.ROLE_HOME)) {
+                    return rm.isRoleHeld(android.app.role.RoleManager.ROLE_HOME)
+                }
+            } catch (_: Exception) { /* fall through to the pre-Q check */ }
+        }
         val ri = packageManager.resolveActivity(
             Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),
             PackageManager.MATCH_DEFAULT_ONLY
@@ -313,6 +428,8 @@ class SetupActivity : AppCompatActivity() {
     }
 
     private fun proceedToNext() {
+        // Reviewing permissions on a live screen must never restart pairing — just go back.
+        if (manageOnly) { finish(); return }
         startActivity(Intent(this, ProvisioningActivity::class.java))
         finish()
     }

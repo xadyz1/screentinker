@@ -4,21 +4,30 @@ const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');
+const { devicesPlayingContent } = require('../lib/devices-playing');
 const upload = require('../middleware/upload');
+const multer = require('multer');   // for MulterError only — the configured instance is `upload` above
 const config = require('../config');
 const { checkStorageLimit, checkRemoteUrl } = require('../middleware/subscription');
-const { sanitizeString } = require('../middleware/sanitize');
+const { cleanUserText } = require('../middleware/sanitize');
 const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
 // Phase 2.2b: workspace-aware access. Mirrors the pattern from devices.js.
 const { accessContext } = require('../lib/tenancy');
 // #73: the upload ingest (processing + insert) is now shared with the agency router.
-const { ingestUploadedFile } = require('../lib/content-ingest');
+const { ingestUploadedFile, deriveMediaMetadata } = require('../lib/content-ingest');
+const htmlBundle = require('../lib/html-bundle');
+const { finalizeUpload, INLINE_SAFE_EXTS } = require('../lib/upload-sniff');
+const { digestFile } = require('../lib/content-digest');
+const { unlinkIfUnreferenced, releaseMeshProvenance } = require('../lib/content-files');
 
 // Multer captures file.originalname directly from the multipart filename header,
-// bypassing sanitizeBody. Apply the same HTML-escape here so a filename like
-// `"><img src=x onerror=alert(1)>.jpg` is stored as `&quot;&gt;&lt;img...` and
-// renders as text in every UI sink. Umlauts, spaces, dots, and other unicode are
-// preserved - sanitizeString only touches `& < > " '`.
+// bypassing sanitizeBody, so it is cleaned here instead.
+//
+// ⚠️ IT IS NO LONGER HTML-ESCAPED, AND THAT IS THE POINT. Escaping on the way in and again at the
+// sink is double encoding, not defence: a file called `Q&A.jpg` was stored as `Q&amp;A.jpg` and
+// shown to the operator as `Q&amp;A.jpg`. The name is stored as typed and escaped where it is
+// rendered — every library sink already does. What is stripped is control characters, which is what
+// actually matters for a value that reaches a log line and a Content-Disposition header.
 //
 // .normalize('NFC') first: macOS clients send NFD-decomposed filenames (an
 // umlaut like "u" + combining diaeresis U+0308 instead of the precomposed
@@ -28,7 +37,7 @@ const { ingestUploadedFile } = require('../lib/content-ingest');
 // site (POST /, POST /remote, POST /embed, PUT /:id rename) flows through
 // safeFilename, so normalizing here covers all paths.
 function safeFilename(name) {
-  return sanitizeString((name || '').normalize('NFC'));
+  return cleanUserText((name || '').normalize('NFC'));
 }
 
 // SSRF gate for remote_url. Returns null if valid, else { status, error }.
@@ -69,7 +78,11 @@ router.get('/', (req, res) => {
     sql += " AND is_active = 1 AND (expires_at IS NULL OR expires_at > strftime('%s','now'))";
   }
   if (folder) { sql += ' AND folder = ?'; params.push(folder); }
-  if (folderId !== undefined) {
+  // #214: a text search (?q=) spans the whole workspace, not just the open folder —
+  // "searching for a logo on page 1 shouldn't miss logos in another folder". When q is
+  // absent we keep the folder-scoped browse behaviour.
+  const q = (req.query.q || '').trim();
+  if (!q && folderId !== undefined) {
     if (folderId === 'root' || folderId === '') {
       sql += ' AND folder_id IS NULL';
     } else {
@@ -77,10 +90,67 @@ router.get('/', (req, res) => {
       params.push(folderId);
     }
   }
-  sql += ' ORDER BY folder, created_at DESC LIMIT ? OFFSET ?';
+  if (q) {
+    // Leading-wildcard LIKE (no index) — fine for the library's scale. Escape the LIKE
+    // metacharacters so a filename with % or _ is matched literally.
+    const esc = q.replace(/[\\%_]/g, (m) => '\\' + m);
+    sql += " AND filename LIKE ? ESCAPE '\\'";
+    params.push('%' + esc + '%');
+  }
+  // #214: type filter. youtube (video/youtube) and web (any other remote_url) are split
+  // out from plain uploaded video/image so the UI's four buckets map cleanly.
+  switch (req.query.type) {
+    case 'image':   sql += " AND mime_type LIKE 'image/%'"; break;
+    case 'video':   sql += " AND mime_type LIKE 'video/%' AND mime_type != 'video/youtube'"; break;
+    case 'youtube': sql += " AND mime_type = 'video/youtube'"; break;
+    case 'web':     sql += " AND remote_url IS NOT NULL AND mime_type != 'video/youtube'"; break;
+    // HTML bundles are their own bucket: they are neither image nor video, and without a case here
+    // they appear only under "all" — present in the library and unfindable.
+    case 'audio':   sql += " AND mime_type LIKE 'audio/%'"; break;
+    case 'bundle':  sql += " AND mime_type = '" + htmlBundle.BUNDLE_MIME + "'"; break;
+    // default / 'all' / unknown: no type constraint
+  }
+  // #214: whitelisted sort (never interpolate user input into ORDER BY). Default keeps the
+  // legacy newest-first ordering.
+  const SORTS = {
+    date_desc: 'created_at DESC',
+    date_asc:  'created_at ASC',
+    name:      'filename COLLATE NOCASE ASC',
+    size:      'file_size DESC',
+  };
+  sql += ' ORDER BY ' + (SORTS[req.query.sort] || SORTS.date_desc) + ' LIMIT ? OFFSET ?';
   params.push(Math.min(parseInt(req.query.limit) || 100, 500), parseInt(req.query.offset) || 0);
   const content = db.prepare(sql).all(...params);
   res.json(content);
+});
+
+/*
+ * Mint a short-lived preview of an HTML bundle for the dashboard.
+ *
+ * Authenticated, and checked against the caller's own workspace by checkContentWrite's read
+ * sibling — a preview must not become a way to read another tenant's archive by uuid. The flatten
+ * happens here so a broken bundle reports its reason to the operator who just uploaded it, rather
+ * than 500ing inside an iframe where nobody sees it.
+ */
+router.post('/:id/bundle-preview', async (req, res) => {
+  const content = db.prepare('SELECT * FROM content WHERE id = ?').get(req.params.id);
+  if (!content) return res.status(404).json({ error: 'Content not found' });
+  if (content.workspace_id && content.workspace_id !== req.workspaceId) {
+    return res.status(403).json({ error: 'Not your content' });
+  }
+  if (content.mime_type !== htmlBundle.BUNDLE_MIME || !content.filepath) {
+    return res.status(400).json({ error: 'Not an HTML bundle' });
+  }
+  const safePath = path.resolve(config.contentDir, path.basename(content.filepath));
+  if (!safePath.startsWith(path.resolve(config.contentDir))) return res.status(403).json({ error: 'Invalid path' });
+  try {
+    const { inlineBundle } = require('../lib/bundle-inline');
+    const out = await inlineBundle(safePath, content.bundle_entry || 'index.html');
+    const token = require('../lib/bundle-preview-store').put(content.id, out.html);
+    res.json({ url: `/api/content/${content.id}/bundle-preview/${token}`, skipped: out.skipped, inlined: out.inlined });
+  } catch (e) {
+    res.status(e && e.status === 413 ? 413 : 500).json({ error: (e && e.message) || 'Bundle could not be rendered' });
+  }
 });
 
 // Get folders list for the caller's current workspace.
@@ -93,15 +163,64 @@ router.get('/folders', (req, res) => {
 });
 
 // Upload content
-router.post('/', checkStorageLimit, upload.single('file'), async (req, res) => {
+// #212: multi-file upload. Accept the new `files` field and keep the legacy single `file` field so
+// older clients / API callers / the replace flow are unaffected.
+//
+// #317: the cap was 20 and nothing caught the refusal. Somebody uploading 160 photos from a party
+// got an error with no number in it and no way to know what to do differently; they ended up
+// dragging them in sixteen at a time. Two halves to that: the cap is higher now, and — the part
+// that actually mattered — going over it says so. Multer rejects a field with too many files by
+// throwing LIMIT_UNEXPECTED_FILE, which without a handler surfaces as a bare 500.
+//
+// The dashboard also splits a large selection into batches, so the cap is a backstop for direct API
+// callers rather than something a person is meant to feel. It is not removed altogether: one
+// request still has to fit in a proxy's body limit and finish inside its timeout.
+const MAX_FILES_PER_UPLOAD = 60;
+const uploadContentFiles = upload.fields([
+  { name: 'files', maxCount: MAX_FILES_PER_UPLOAD },
+  { name: 'file', maxCount: 1 },
+]);
+
+// Turn multer's own refusals into something the person reading the toast can act on. Without this
+// every one of them was an unhandled error: not just the file count, but an oversized file too.
+function uploadContentFilesGuarded(req, res, next) {
+  uploadContentFiles(req, res, (err) => {
+    if (!err) return next();
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_UNEXPECTED_FILE' || err.code === 'LIMIT_FILE_COUNT') {
+        return res.status(400).json({
+          error: `Too many files in one upload. The limit is ${MAX_FILES_PER_UPLOAD} per request — `
+               + 'the dashboard splits larger selections automatically, so send them in batches if you are calling the API directly.',
+        });
+      }
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({
+          error: `That file is larger than the ${Math.round(config.maxFileSize / (1024 * 1024))} MB limit for a single upload.`,
+        });
+      }
+      return res.status(400).json({ error: `Upload rejected: ${err.message}` });
+    }
+    return next(err);
+  });
+}
+router.post('/', checkStorageLimit, uploadContentFilesGuarded, async (req, res) => {
   try {
     if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before uploading.' });
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const files = [...((req.files && req.files.files) || []), ...((req.files && req.files.file) || [])];
+    if (files.length === 0) return res.status(400).json({ error: 'No file uploaded' });
 
     // #73: shared ingest - identical processing + insert for dashboard and agency uploads.
-    const content = await ingestUploadedFile({ file: req.file, userId: req.user.id, workspaceId: req.workspaceId });
-    res.status(201).json(content);
+    const folderId = req.body.folder_id || null;
+    const results = [];
+    for (const file of files) {
+      results.push(await ingestUploadedFile({ file, userId: req.user.id, workspaceId: req.workspaceId, folderId }));
+    }
+    // Backward-compatible shape: a single upload still returns the content object (what
+    // every existing caller reads); a multi-file upload returns the array of them.
+    for (const c of results) { try { require('../lib/revisions').recordCurrent(db, 'content', c.id, { actor: require('../lib/releases').actorOf(req), summary: 'Uploaded' }); } catch (_) {} }
+    res.status(201).json(results.length === 1 ? results[0] : results);
   } catch (err) {
+    if (err && err.name === 'UnsupportedUploadError') return res.status(400).json({ error: err.message });
     console.error('Upload error:', err);
     res.status(500).json({ error: 'Upload failed' });
   }
@@ -126,6 +245,7 @@ router.post('/remote', checkRemoteUrl, (req, res) => {
     `).run(id, req.user.id, req.workspaceId, safeFilename(filename), mimeType, url);
 
     const content = db.prepare('SELECT * FROM content WHERE id = ?').get(id);
+    try { require('../lib/revisions').recordCurrent(db, 'content', content.id, { actor: require('../lib/releases').actorOf(req), summary: 'Added' }); } catch (_) {}
     res.status(201).json(content);
   } catch (err) {
     console.error('Remote URL add error:', err);
@@ -177,6 +297,7 @@ router.post('/youtube', async (req, res) => {
     `).run(id, req.user.id, req.workspaceId, safeFilename(filename), embedUrl, thumbnailUrl);
 
     const content = db.prepare('SELECT * FROM content WHERE id = ?').get(id);
+    try { require('../lib/revisions').recordCurrent(db, 'content', content.id, { actor: require('../lib/releases').actorOf(req), summary: 'Added' }); } catch (_) {}
     res.status(201).json(content);
   } catch (err) {
     console.error('YouTube add error:', err);
@@ -230,6 +351,140 @@ function checkContentWrite(req, res) {
   return content;
 }
 
+// #213: boolean form of checkContentWrite for batch paths (no res side effects). True if
+// req.user may modify this content row. Mirrors checkContentWrite's authorization exactly.
+function contentWritable(req, content) {
+  if (!content) return false;
+  if (!content.workspace_id) return PLATFORM_ROLES.includes(req.user.role);
+  const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(content.workspace_id);
+  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  if (!ctx) return false;
+  if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') return false;
+  return true;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// #213: shared single-row teardown used by DELETE /:id and POST /batch/delete. Removes the
+// row's files, scrubs it from published snapshots in its workspace, deletes the row (cascades
+// playlist_items). Returns the device ids whose playlists referenced it so the caller can push
+// updates. Pure DB+FS, no HTTP. `content.id` MUST be a validated UUID (LIKE scrub) and the
+// caller MUST have authorized the write. File unlinks are wrapped so they never throw.
+function purgeContentRow(content) {
+  const id = content.id;
+  unlinkIfUnreferenced(content.filepath, id, 'filepath');
+  unlinkIfUnreferenced(content.thumbnail_path, id, 'thumbnail_path');
+  unlinkIfUnreferenced(content.subtitle_url, id, 'subtitle_url'); // #216 sidecar (no-op pre-#216)
+
+  /*
+   * ⚠️ And the provenance row goes with it, because nothing else will take it. The table declares
+   * no FOREIGN KEY, so the cascade that removes playlist_items does not reach it — the row would
+   * survive pointing at a deleted content id, and the next push of that asset would find it,
+   * conclude the bytes are merely missing, transfer the whole file again and charge the operator's
+   * allowance a second time for storage they had already paid for and then reclaimed.
+   */
+  releaseMeshProvenance(id);
+
+  // Resolved: a device that INHERITS the playlist holding this content has no copy of the id on
+  // its row, so joining on devices.playlist_id would leave exactly those screens showing content
+  // that no longer exists on disk.
+  const affected = db.prepare(`
+    SELECT DISTINCT d.id as device_id FROM devices d
+    JOIN device_resolved_playlist r ON r.device_id = d.id
+    JOIN playlists p ON r.playlist_id = p.id
+    JOIN playlist_items pi ON pi.playlist_id = p.id
+    WHERE pi.content_id = ?
+  `).all(id).map(r => r.device_id);
+
+  const snapshotPlaylists = db.prepare(
+    "SELECT id, published_snapshot FROM playlists WHERE workspace_id = ? AND published_snapshot LIKE ?"
+  ).all(content.workspace_id, `%${id}%`);
+  for (const pl of snapshotPlaylists) {
+    try {
+      const items = JSON.parse(pl.published_snapshot);
+      const filtered = items.filter(item => item.content_id !== id);
+      if (filtered.length !== items.length) {
+        db.prepare('UPDATE playlists SET published_snapshot = ? WHERE id = ?').run(JSON.stringify(filtered), pl.id);
+      }
+    } catch (e) { /* corrupt snapshot, skip */ }
+  }
+
+  db.prepare('DELETE FROM content WHERE id = ?').run(id);
+  return affected;
+}
+
+// #213: push a playlist refresh to a set of device ids (deduped). Silent on any failure.
+function pushContentUpdates(req, deviceIds) {
+  try {
+    const io = req.app.get('io');
+    if (!io) return;
+    const { buildPlaylistPayload } = require('../ws/deviceSocket');
+    const commandQueue = require('../lib/command-queue');
+    const deviceNs = io.of('/device');
+    for (const id of new Set(deviceIds)) {
+      commandQueue.queueOrEmitPlaylistUpdate(deviceNs, id, buildPlaylistPayload);
+    }
+  } catch (e) { /* silent */ }
+}
+
+// #213: batch delete. Validates + authorizes EVERY id first (atomic — the whole batch is
+// rejected if any id is malformed/missing/forbidden), then deletes in one transaction.
+router.post('/batch/delete', (req, res) => {
+  const ids = Array.isArray(req.body.ids) ? req.body.ids : null;
+  if (!ids || ids.length === 0) return res.status(400).json({ error: 'ids must be a non-empty array' });
+  if (ids.length > 500) return res.status(400).json({ error: 'Too many items (max 500 per batch)' });
+
+  const rows = [];
+  for (const id of ids) {
+    if (typeof id !== 'string' || !UUID_RE.test(id)) return res.status(400).json({ error: `Invalid content ID: ${id}` });
+    const content = db.prepare('SELECT * FROM content WHERE id = ?').get(id);
+    if (!content) return res.status(404).json({ error: `Content not found: ${id}` });
+    if (!contentWritable(req, content)) return res.status(403).json({ error: `Access denied for content: ${id}` });
+    rows.push(content);
+  }
+
+  const affected = new Set();
+  db.transaction(() => {
+    for (const content of rows) for (const d of purgeContentRow(content)) affected.add(d);
+  })();
+  pushContentUpdates(req, affected);
+  res.json({ success: true, deleted: rows.length, affectedDevices: [...affected] });
+});
+
+// #213: batch move. Reassigns folder_id for many items at once. Folder is organizational only
+// (not in the published snapshot), so no device push is needed. Same atomic validate-all-first.
+router.post('/batch/move', (req, res) => {
+  const ids = Array.isArray(req.body.ids) ? req.body.ids : null;
+  const folderId = req.body.folder_id || null;
+  if (!ids || ids.length === 0) return res.status(400).json({ error: 'ids must be a non-empty array' });
+  if (ids.length > 500) return res.status(400).json({ error: 'Too many items (max 500 per batch)' });
+
+  const rows = [];
+  for (const id of ids) {
+    if (typeof id !== 'string' || !UUID_RE.test(id)) return res.status(400).json({ error: `Invalid content ID: ${id}` });
+    const content = db.prepare('SELECT * FROM content WHERE id = ?').get(id);
+    if (!content) return res.status(404).json({ error: `Content not found: ${id}` });
+    if (!contentWritable(req, content)) return res.status(403).json({ error: `Access denied for content: ${id}` });
+    rows.push(content);
+  }
+  // Target folder (if any) must exist and share the workspace of every moved item.
+  if (folderId) {
+    const target = db.prepare('SELECT workspace_id FROM content_folders WHERE id = ?').get(folderId);
+    if (!target) return res.status(400).json({ error: 'Invalid folder_id' });
+    for (const content of rows) {
+      if (target.workspace_id !== content.workspace_id) {
+        return res.status(403).json({ error: 'Cannot move content to a folder in another workspace' });
+      }
+    }
+  }
+
+  db.transaction(() => {
+    const stmt = db.prepare('UPDATE content SET folder_id = ? WHERE id = ?');
+    for (const content of rows) stmt.run(folderId, content.id);
+  })();
+  res.json({ success: true, moved: rows.length, folder_id: folderId });
+});
+
 // Get content metadata
 router.get('/:id', (req, res) => {
   const content = checkContentRead(req, res);
@@ -242,18 +497,33 @@ router.put('/:id', (req, res) => {
   const content = checkContentWrite(req, res);
   if (!content) return;
 
-  const { filename, mime_type, remote_url, folder, folder_id, expires_at } = req.body;
+  const { filename, mime_type, remote_url, folder, folder_id, expires_at, unstable_connection,
+          captions_enabled, captions_lang, subtitle_url, subtitle_lang } = req.body;
   const updates = [];
   const values = [];
+  /*
+   * Under approval, the fields that change WHAT PLAYS (the URL a remote item points at, its type,
+   * captions, subtitles, the quality ceiling) are not "details": a new remote_url is new content
+   * on every screen that shows the item. Those land in the draft beside the live row and go
+   * through review like replaced bytes do. Name, folder and expiry stay live: they organise and
+   * schedule the item without changing what it shows.
+   */
+  const policy = require('../lib/release-policy');
+  const revisionsLib = require('../lib/revisions');
+  const approvalOn = !!(content.workspace_id && policy.approvalRequired(db, content.workspace_id));
+  const draftPatch = {};
+  const set = (col, val) => {
+    if (approvalOn && revisionsLib.CONTENT_PLAYBACK_FIELDS.includes(col)) draftPatch[col] = val;
+    else { updates.push(`${col} = ?`); values.push(val); }
+  };
   if (filename !== undefined) { updates.push('filename = ?'); values.push(safeFilename(filename)); }
-  if (mime_type !== undefined) { updates.push('mime_type = ?'); values.push(mime_type); }
+  if (mime_type !== undefined) set('mime_type', mime_type);
   if (remote_url !== undefined) {
     if (remote_url) {
       const urlErr = validateRemoteUrl(remote_url);
       if (urlErr) return res.status(urlErr.status).json({ error: urlErr.error });
     }
-    updates.push('remote_url = ?');
-    values.push(remote_url || null);
+    set('remote_url', remote_url || null);
   }
   if (folder !== undefined) { updates.push('folder = ?'); values.push(folder || null); }
   if (folder_id !== undefined) {
@@ -289,12 +559,32 @@ router.put('/:id', (req, res) => {
     updates.push('expires_at = ?'); values.push(val);
     updates.push('is_active = 1');
   }
+  // #217: force a lower YouTube quality ceiling for weak/unstable WiFi. Stored 0/1;
+  // accepts booleans or 0/1 from the client and coerces to an integer.
+  if (unstable_connection !== undefined) set('unstable_connection', unstable_connection ? 1 : 0);
+  // #216: caption/subtitle metadata. The subtitle FILE is uploaded via POST /:id/subtitle;
+  // these fields toggle YouTube captions, set languages, or clear a subtitle (subtitle_url=null).
+  if (captions_enabled !== undefined) set('captions_enabled', captions_enabled ? 1 : 0);
+  if (captions_lang !== undefined) set('captions_lang', captions_lang ? String(captions_lang).slice(0, 10) : null);
+  if (subtitle_url !== undefined) {
+    // Only null (clear) is accepted here — a real subtitle_url is set by the upload endpoint.
+    set('subtitle_url', subtitle_url ? String(subtitle_url).slice(0, 255) : null);
+  }
+  if (subtitle_lang !== undefined) set('subtitle_lang', subtitle_lang ? String(subtitle_lang).slice(0, 10) : null);
 
   if (updates.length > 0) {
     values.push(req.params.id);
     db.prepare(`UPDATE content SET ${updates.join(', ')} WHERE id = ?`).run(...values);
   }
 
+  const actor = require('../lib/releases').actorOf(req);
+  if (Object.keys(draftPatch).length) {
+    const existing = revisionsLib.parseJson(content.draft_json, null) || {};
+    db.prepare('UPDATE content SET draft_json = ? WHERE id = ?').run(JSON.stringify({ ...existing, ...draftPatch }), req.params.id);
+    revisionsLib.recordCurrent(db, 'content', req.params.id, { actor, summary: 'Updated details (draft)' });
+    return res.json({ ...db.prepare('SELECT * FROM content WHERE id = ?').get(req.params.id), draft: true, pending_review: true });
+  }
+  revisionsLib.recordCurrent(db, 'content', req.params.id, { actor, summary: 'Updated details' });
   res.json(db.prepare('SELECT * FROM content WHERE id = ?').get(req.params.id));
 });
 
@@ -304,40 +594,164 @@ router.put('/:id/replace', upload.single('file'), async (req, res) => {
   if (!content) return;
   if (!req.file) return res.status(400).json({ error: 'No file provided' });
 
-  // Delete old file
-  if (content.filepath) {
-    const oldPath = path.join(config.contentDir, content.filepath);
-    if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
-  }
-  // Delete old thumbnail
-  if (content.thumbnail_path) {
-    const oldThumb = path.join(config.contentDir, content.thumbnail_path);
-    if (fs.existsSync(oldThumb)) fs.unlinkSync(oldThumb);
+  // Delete old file and thumbnail — but only if no other row still points at them. A
+  // mesh-received asset is named after its bytes and can legitimately back one row per
+  // workspace; replacing one customer's copy must not empty another's screen.
+  /*
+   * Version history: the bytes being replaced are RETAINED under .history (a move when this row
+   * is their only reference, a copy otherwise), and every revision that described them is
+   * repointed there, so the previous version stays restorable. Approval on: the new bytes land as
+   * a DRAFT next to the live file and nothing a screen shows changes until the draft is reviewed
+   * and published (lib/releases.js releaseContentDraft).
+   */
+  const policy = require('../lib/release-policy');
+  const revisions = require('../lib/revisions');
+  const actor = require('../lib/releases').actorOf(req);
+  const approvalOn = !!(content.workspace_id && policy.approvalRequired(db, content.workspace_id));
+  let retainedFile = null, retainedThumb = null;
+  if (!approvalOn) {
+    const prev = revisions.latest(db, 'content', content.id);
+    const tag = prev ? `r${prev.rev_no}` : 'r0';
+    retainedFile = revisions.retainContentFile(db, content.id, content.filepath, tag);
+    retainedThumb = revisions.retainContentFile(db, content.id, content.thumbnail_path, tag);
+    if (!retainedFile) unlinkIfUnreferenced(content.filepath, content.id, 'filepath');
+    if (!retainedThumb) unlinkIfUnreferenced(content.thumbnail_path, content.id, 'thumbnail_path');
   }
 
-  const filepath = req.file.filename;
-  let width = null, height = null, thumbnailPath = null;
+  // Same content-derived naming as the main ingest path (lib/upload-sniff) — the caller
+  // does not choose the extension here either. A non-media upload 400s.
+  let filepath, mime;
+  try { ({ filepath, mime } = finalizeUpload(req.file)); }
+  catch (e) { return res.status(e.status || 400).json({ error: e.message }); }
 
-  // Generate new thumbnail for images
-  try {
-    if (req.file.mimetype.startsWith('image/')) {
-      const sharp = require('sharp');
-      const metadata = await sharp(req.file.path).metadata();
-      width = metadata.width;
-      height = metadata.height;
-      thumbnailPath = `thumb_${filepath}`;
-      await sharp(req.file.path).resize(config.thumbnailWidth).jpeg({ quality: 70 })
-        .toFile(path.join(config.contentDir, thumbnailPath));
+  /*
+   * ⚠️ A REPLACE MAY NOT CROSS THE BUNDLE BOUNDARY, IN EITHER DIRECTION.
+   *
+   * Replacing a video with an image is deliberately allowed — the item still plays, it just plays
+   * something else. A bundle is different in kind: mime_type is what every player switches on, and
+   * ws/deviceSocket.js re-stamps it into the live payload at send time, so swapping a JPEG for a
+   * bundle changes what every screen must DO with that item, with no republish, no operator
+   * confirmation and nothing in any log. A player that cannot render bundles would simply stop.
+   */
+  const wasBundle = content.mime_type === htmlBundle.BUNDLE_MIME;
+  const isBundle = mime === 'application/zip' || mime === htmlBundle.BUNDLE_MIME;
+  if (wasBundle !== isBundle) {
+    try { fs.unlinkSync(path.join(config.contentDir, filepath)); } catch (e) { /* best effort */ }
+    return res.status(400).json({
+      error: wasBundle
+        ? 'This item is an HTML bundle — replace it with another bundle, or delete it and add the new file.'
+        : 'An HTML bundle cannot replace a media file. Add it as new content instead.',
+    });
+  }
+
+  /* Re-derived from the NEW archive, for the same reason byte_digest is re-hashed below: the row
+   * keeps its id while its contents change, and an entry point carried over from the old bytes
+   * names a file the new archive may not contain. */
+  let bundleEntry = null;
+  if (isBundle) {
+    try {
+      const info = await htmlBundle.validateBundle(path.join(config.contentDir, filepath));
+      bundleEntry = info.entryPoint;
+      mime = htmlBundle.BUNDLE_MIME;
+    } catch (e) {
+      try { fs.unlinkSync(path.join(config.contentDir, filepath)); } catch (e2) { /* best effort */ }
+      return res.status(e.status || 400).json({ error: e.message });
     }
-  } catch (e) {
-    console.warn('Thumbnail generation failed:', e.message);
   }
 
-  db.prepare(`UPDATE content SET filepath = ?, mime_type = ?, file_size = ?, thumbnail_path = ?, width = ?, height = ? WHERE id = ?`)
-    .run(filepath, req.file.mimetype, req.file.size, thumbnailPath, width, height, req.params.id);
+  // Re-derive EVERYTHING the bytes decide, through the SAME function the upload path uses.
+  // This route used to carry a shorter copy that handled images only, and got three things
+  // wrong that an upload gets right:
+  //   - a replaced VIDEO lost its duration (the row kept the OLD clip's length, so #237's
+  //     "default an item to the clip's own length" then handed out the wrong number), its
+  //     dimensions, and its thumbnail;
+  //   - a replaced IMAGE was measured with raw sharp metadata instead of imageDisplayDims and
+  //     thumbnailed without .rotate(), re-introducing the EXIF-orientation bug (#170) that
+  //     ingest fixes — a portrait photo came back landscape with blue bars;
+  //   - both left width/height NULL for video, which is what the orientation-aware paths read.
+  const { width, height, durationSec, thumbnailPath } = await deriveMediaMetadata(req.file.path, filepath, mime);
+
+  // Bump the revision: this is the ONLY operation in the product that changes an asset's bytes
+  // without changing its id, so it is the only thing that can make a player's cached copy wrong.
+  // Players key their media cache on the revision, so this is what evicts it.
+  //
+  // strftime seconds can collide with the previous value if a replace lands inside the same second
+  // as the upload (a small file, a scripted replace) — and a revision that does not change is a
+  // cache that never updates. MAX(now, previous + 1) guarantees it moves.
+  // duration_sec comes from the NEW bytes. COALESCE-to-NULL rather than keeping the old value:
+  // a replace that turns a video into an image genuinely has no duration, and a stale one would
+  // silently become the default for every later playlist add (lib/item-duration.js).
+  /*
+   * ⚠️ byte_digest IS RE-HASHED FROM THE NEW BYTES, OR THE DIGEST BECOMES A LIE.
+   *
+   * This is the writer the column's migration note flags most sharply: the row keeps its id and
+   * filepath while its CONTENT changes, so a digest carried over from the old bytes describes a
+   * file that no longer exists. A mesh peer asking "do you already have this asset?" would then be
+   * told yes — matching digest, file present on disk — for ever, and its push would be skipped
+   * while the screen played the operator's local replacement instead.
+   */
+  let newDigest = null;
+  try { newDigest = await digestFile(path.join(config.contentDir, filepath)); } catch (e) { newDigest = null; }
+
+  if (approvalOn) {
+    const prevDraft = revisions.parseJson(content.draft_json, null) || {};
+    revisions.disposeDraftFiles(db, content.id, prevDraft, content);
+    const { filepath: _f, thumbnail_path: _t, ...prevFields } = prevDraft;   // keep pending URL/caption edits, drop the old bytes
+    const draft = { ...prevFields, filepath, mime_type: mime, file_size: req.file.size, thumbnail_path: thumbnailPath, width, height, duration_sec: durationSec, byte_digest: newDigest, bundle_entry: bundleEntry };
+    db.prepare('UPDATE content SET draft_json = ? WHERE id = ?').run(JSON.stringify(draft), req.params.id);
+    revisions.recordCurrent(db, 'content', req.params.id, { actor, summary: 'Replaced file (draft)' });
+    return res.json({ ...db.prepare('SELECT * FROM content WHERE id = ?').get(req.params.id), draft: true, pending_review: true });
+  }
+
+  db.transaction(() => {
+    if (retainedFile) db.prepare('UPDATE revisions SET file_ref = ? WHERE resource_type = ? AND resource_id = ? AND file_ref = ?').run(retainedFile, 'content', content.id, content.filepath);
+    if (retainedThumb) db.prepare('UPDATE revisions SET thumb_ref = ? WHERE resource_type = ? AND resource_id = ? AND thumb_ref = ?').run(retainedThumb, 'content', content.id, content.thumbnail_path);
+    db.prepare(`UPDATE content
+                   SET filepath = ?, mime_type = ?, file_size = ?, thumbnail_path = ?, width = ?, height = ?,
+                       duration_sec = ?, byte_digest = ?, bundle_entry = ?,
+                       updated_at = MAX(CAST(strftime('%s','now') AS INTEGER), COALESCE(NULLIF(updated_at, 0), created_at) + 1)
+                 WHERE id = ?`)
+      .run(filepath, mime, req.file.size, thumbnailPath, width, height, durationSec, newDigest, bundleEntry, req.params.id);
+    revisions.recordCurrent(db, 'content', req.params.id, { actor, summary: 'Replaced file' });
+  })();
+
+  const affected = devicesPlayingContent(req.params.id);
+  pushContentUpdates(req, affected);
 
   res.json(db.prepare('SELECT * FROM content WHERE id = ?').get(req.params.id));
 });
+
+// #216: upload a WebVTT subtitle track for an uploaded video. Stores the .vtt in the
+// content dir (served at /uploads/content/<file>) and records its filename + language on
+// the content row. Replaces any existing subtitle (old file removed).
+router.post('/:id/subtitle', upload.subtitleUpload.single('subtitle'), async (req, res) => {
+  const content = checkContentWrite(req, res);
+  if (!content) {
+    // checkContentWrite already sent the response; clean up the orphaned upload.
+    if (req.file) { try { fs.unlinkSync(req.file.path); } catch {} }
+    return;
+  }
+  if (!req.file) return res.status(400).json({ error: 'No subtitle file provided' });
+
+  // Remove the previous subtitle file if there was one, unless it is shared (see purgeContentRow).
+  unlinkIfUnreferenced(content.subtitle_url, content.id, 'subtitle_url');
+  const lang = req.body.subtitle_lang ? String(req.body.subtitle_lang).slice(0, 10) : (content.subtitle_lang || null);
+  db.prepare('UPDATE content SET subtitle_url = ?, subtitle_lang = ? WHERE id = ?')
+    .run(req.file.filename, lang, req.params.id);
+  res.json(db.prepare('SELECT * FROM content WHERE id = ?').get(req.params.id));
+});
+
+// Uploads share the dashboard origin — see server.js hardenUploadResponse. Same rule
+// applied here so these routes are safe on their own merits, not because another mount
+// happens to be registered first.
+function hardenUploadResponse(res, filename) {
+  res.setHeader('Content-Security-Policy', 'sandbox');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  if (!INLINE_SAFE_EXTS.has(path.extname(String(filename || '')).toLowerCase())) {
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', 'attachment');
+  }
+}
 
 // Serve content file
 router.get('/:id/file', (req, res) => {
@@ -347,6 +761,7 @@ router.get('/:id/file', (req, res) => {
   // Prevent path traversal
   const safePath = path.resolve(config.contentDir, path.basename(content.filepath));
   if (!safePath.startsWith(path.resolve(config.contentDir))) return res.status(403).json({ error: 'Invalid path' });
+  hardenUploadResponse(res, content.filepath);
   res.sendFile(safePath);
 });
 
@@ -357,6 +772,7 @@ router.get('/:id/thumbnail', (req, res) => {
   if (!content.thumbnail_path) return res.status(404).json({ error: 'Thumbnail not found' });
   const safePath = path.resolve(config.contentDir, path.basename(content.thumbnail_path));
   if (!safePath.startsWith(path.resolve(config.contentDir))) return res.status(403).json({ error: 'Invalid path' });
+  hardenUploadResponse(res, content.thumbnail_path);
   res.sendFile(safePath);
 });
 
@@ -364,65 +780,19 @@ router.get('/:id/thumbnail', (req, res) => {
 router.delete('/:id', (req, res) => {
   const content = checkContentWrite(req, res);
   if (!content) return;
-
-  // Delete file from disk (skip for remote URL content)
-  if (content.filepath) {
-    const filePath = path.join(config.contentDir, content.filepath);
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  }
-
-  // Delete thumbnail
-  if (content.thumbnail_path) {
-    const thumbPath = path.join(config.contentDir, content.thumbnail_path);
-    if (fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
-  }
-
-  // Get devices that have this content in their playlist (via playlist_items)
-  const affectedDevices = db.prepare(`
-    SELECT DISTINCT d.id as device_id FROM devices d
-    JOIN playlists p ON d.playlist_id = p.id
-    JOIN playlist_items pi ON pi.playlist_id = p.id
-    WHERE pi.content_id = ?
-  `).all(req.params.id);
-
-  // Scrub published snapshots that reference this content
-  // Validate UUID format to prevent LIKE wildcard injection
-  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  // Validate UUID format to prevent LIKE wildcard injection in the snapshot scrub.
   if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: 'Invalid content ID format' });
-  // Phase 2.2k: scope snapshot scrubbing by content.workspace_id (was content.user_id).
-  // Playlists referencing this content live in the same workspace; user_id-keying missed
-  // cross-user playlists in the same workspace once playlists became workspace-scoped.
-  const snapshotPlaylists = db.prepare(
-    "SELECT id, published_snapshot FROM playlists WHERE workspace_id = ? AND published_snapshot LIKE ?"
-  ).all(content.workspace_id, `%${req.params.id}%`);
-  for (const pl of snapshotPlaylists) {
-    try {
-      const items = JSON.parse(pl.published_snapshot);
-      const filtered = items.filter(item => item.content_id !== req.params.id);
-      if (filtered.length !== items.length) {
-        db.prepare('UPDATE playlists SET published_snapshot = ? WHERE id = ?')
-          .run(JSON.stringify(filtered), pl.id);
-      }
-    } catch (e) { /* corrupt snapshot, skip */ }
-  }
 
-  // Delete from DB (cascades to playlist_items via ON DELETE CASCADE)
-  db.prepare('DELETE FROM content WHERE id = ?').run(req.params.id);
-
-  // Push updated snapshots to affected devices
+  // #213: shared teardown (file removal + snapshot scrub + row delete). Returns the affected
+  // device ids so we can push a refresh.
+  const affectedDevices = purgeContentRow(content);
+  // Deleting the item deletes its history and retained bytes with it, consistent with the file.
   try {
-    const io = req.app.get('io');
-    if (io) {
-      const { buildPlaylistPayload } = require('../ws/deviceSocket');
-      const commandQueue = require('../lib/command-queue');
-      const deviceNs = io.of('/device');
-      for (const d of affectedDevices) {
-        commandQueue.queueOrEmitPlaylistUpdate(deviceNs, d.device_id, buildPlaylistPayload);
-      }
-    }
-  } catch (e) { /* silent */ }
-
-  res.json({ success: true, affectedDevices: affectedDevices.map(d => d.device_id) });
+    db.prepare("DELETE FROM revisions WHERE resource_type = 'content' AND resource_id = ?").run(content.id);
+    fs.rmSync(path.join(require('../lib/revisions').historyDir(), content.id), { recursive: true, force: true });
+  } catch (_) {}
+  pushContentUpdates(req, affectedDevices);
+  res.json({ success: true, affectedDevices });
 });
 
 module.exports = router;

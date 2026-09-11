@@ -223,7 +223,7 @@ async function sendEmail({ to, subject, text, html, fromName, rawSubject }) {
       return { sent: false, reason: 'dev_restricted' };
     }
   }
-  const finalSubject = rawSubject ? subject : `[ScreenTinker] ${subject}`;
+  const finalSubject = rawSubject ? subject : `[SwiftDisplay] ${subject}`;
   const finalHtml = html || `<pre style="font-family:sans-serif">${escapeHtml(text || '')}</pre>`;
   try {
     if (TRANSPORT === 'smtp') {

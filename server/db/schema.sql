@@ -73,6 +73,10 @@ CREATE TABLE IF NOT EXISTS devices (
     screen_width    INTEGER,
     screen_height   INTEGER,
     playlist_id     TEXT REFERENCES playlists(id) ON DELETE SET NULL,
+    -- embedded-renderer: JSON screen profile for MCU clients (see lib/embedded-profiles.js)
+    screen_profile  TEXT,
+    -- embedded-renderer: one-time secret for claim polling security
+    claim_secret    TEXT,
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
@@ -107,7 +111,12 @@ CREATE TABLE IF NOT EXISTS content (
     width           INTEGER,
     height          INTEGER,
     remote_url      TEXT,
-    created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    -- Bumped whenever the BYTES change (PUT /:id/replace). Players cache media by id, and an id
+    -- whose bytes changed underneath them is the one way a cached asset can be stale forever: the
+    -- URL is identical, so every offline cache we have would keep serving the old file. This is
+    -- what makes the URL differ exactly when the content differs.
+    updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
 
 CREATE TABLE IF NOT EXISTS assignments (
@@ -195,6 +204,32 @@ INSERT OR IGNORE INTO layout_zones (id, layout_id, name, x_percent, y_percent, w
   ('z-q-2',     'tpl-quad',      'Top Right',       50, 0, 50, 50, 0, 1),
   ('z-q-3',     'tpl-quad',      'Bottom Left',     0, 50, 50, 50, 0, 2),
   ('z-q-4',     'tpl-quad',      'Bottom Right',    50, 50, 50, 50, 0, 3);
+
+-- Portrait templates. Zones are percentages, so these differ from the landscape set only in the
+-- layout's own width/height and in PROPORTIONS chosen for a tall screen. A landscape template
+-- rotated is not a portrait template: "Three Column" at 33% each becomes three tall slivers, and a
+-- 15%-tall ticker that reads well across 1080px is a 288px band on a 1920px-tall panel.
+INSERT OR IGNORE INTO layouts (id, user_id, name, width, height, is_template, template_category) VALUES
+  ('tpl-p-full',    NULL, 'Portrait Fullscreen',         1080, 1920, 1, 'basic'),
+  ('tpl-p-halves',  NULL, 'Portrait Split',              1080, 1920, 1, 'split'),
+  ('tpl-p-ticker',  NULL, 'Portrait with Ticker',        1080, 1920, 1, 'news'),
+  ('tpl-p-banner',  NULL, 'Portrait Banner + Body',      1080, 1920, 1, 'news'),
+  ('tpl-p-thirds',  NULL, 'Portrait Three Stacked',      1080, 1920, 1, 'grid'),
+  ('tpl-p-pip',     NULL, 'Portrait Picture in Picture', 1080, 1920, 1, 'overlay');
+
+INSERT OR IGNORE INTO layout_zones (id, layout_id, name, x_percent, y_percent, width_percent, height_percent, z_index, sort_order) VALUES
+  ('z-pf-1',   'tpl-p-full',   'Main',            0, 0, 100, 100, 0, 0),
+  ('z-ph-1',   'tpl-p-halves', 'Top',             0, 0, 100, 50, 0, 0),
+  ('z-ph-2',   'tpl-p-halves', 'Bottom',          0, 50, 100, 50, 0, 1),
+  ('z-pt-1',   'tpl-p-ticker', 'Main Content',    0, 0, 100, 88, 0, 0),
+  ('z-pt-2',   'tpl-p-ticker', 'Bottom Ticker',   0, 88, 100, 12, 1, 1),
+  ('z-pb-1',   'tpl-p-banner', 'Top Banner',      0, 0, 100, 15, 0, 0),
+  ('z-pb-2',   'tpl-p-banner', 'Body',            0, 15, 100, 85, 0, 1),
+  ('z-p3-1',   'tpl-p-thirds', 'Top',             0, 0, 100, 33.33, 0, 0),
+  ('z-p3-2',   'tpl-p-thirds', 'Middle',          0, 33.33, 100, 33.34, 0, 1),
+  ('z-p3-3',   'tpl-p-thirds', 'Bottom',          0, 66.67, 100, 33.33, 0, 2),
+  ('z-pp-1',   'tpl-p-pip',    'Background',      0, 0, 100, 100, 0, 0),
+  ('z-pp-2',   'tpl-p-pip',    'PiP Window',      58, 4, 38, 20, 1, 1);
 
 -- ===================== WIDGETS =====================
 
@@ -323,12 +358,21 @@ CREATE TABLE IF NOT EXISTS play_logs (
     duration_sec    INTEGER,
     completed       INTEGER NOT NULL DEFAULT 0,
     trigger_type    TEXT DEFAULT 'playlist',
-    created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    -- #299: id minted by the PLAYER for a play it recorded while offline. It exists so a
+    -- replayed backlog is idempotent: a player that flushes, crashes before it sees the ack,
+    -- and flushes again must not double-count the same play. NULL for live plays, which are
+    -- reported once and need no key.
+    client_event_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_play_logs_device ON play_logs(device_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_play_logs_content ON play_logs(content_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_play_logs_time ON play_logs(started_at, ended_at);
+-- ⚠️ idx_play_logs_client_event is created by the MIGRATIONS, not here. This file is exec'd
+-- wholesale before the migrations run, so on a database that predates client_event_id the index
+-- would reference a column the ALTER TABLE has not added yet — which throws during the schema
+-- exec and takes the whole server down at import, not just the index.
 
 -- ===================== DEVICE GROUPS =====================
 
@@ -588,4 +632,105 @@ CREATE INDEX IF NOT EXISTS idx_agency_notifications_unsent ON agency_notificatio
 CREATE TABLE IF NOT EXISTS schema_migrations (
     id              TEXT PRIMARY KEY,
     ran_at          INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+
+-- embedded-renderer: server-side item cursor so an MCU can wake, fetch the current frame,
+-- then sleep for exactly X-ST-Expires-In seconds without any local playlist state.
+-- started_at = Unix seconds; the route advances item_index when now-started_at >= duration_sec.
+CREATE TABLE IF NOT EXISTS embedded_cursor (
+    device_id   TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+    item_index  INTEGER NOT NULL DEFAULT 0,
+    started_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+CREATE TABLE IF NOT EXISTS embedded_zone_cursor (
+    device_id   TEXT REFERENCES devices(id) ON DELETE CASCADE,
+    zone_id     TEXT NOT NULL,
+    item_index  INTEGER NOT NULL DEFAULT 0,
+    started_at  INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    PRIMARY KEY (device_id, zone_id)
+);
+
+-- ===================== DATA SOURCES & INTEGRATIONS ENGINE =====================
+-- Universal data sources (iCal feeds, REST APIs, Google Sheets, SQL queries).
+-- Server polls on a configured interval, caches structured JSON state,
+-- and injects dynamic fields into slide templates and widgets.
+CREATE TABLE IF NOT EXISTS data_sources (
+    id              TEXT PRIMARY KEY,
+    workspace_id    TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    slug            TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    type            TEXT NOT NULL,                            -- 'ical' | 'json_api' | 'google_sheets' | 'mysql'
+    config          TEXT NOT NULL,                            -- JSON: { url, interval_min, filters, auth, locale, ... }
+    cached_data     TEXT,                                     -- JSON payload of last successful fetch
+    last_fetched_at INTEGER DEFAULT 0,                        -- Unix seconds
+    last_status     TEXT DEFAULT 'ok',                        -- 'ok' | 'error' | 'pending'
+    last_error      TEXT,                                     -- Diagnostic message on failure
+    created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    UNIQUE(workspace_id, slug)
+);
+CREATE INDEX IF NOT EXISTS idx_data_sources_workspace ON data_sources(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_data_sources_slug ON data_sources(workspace_id, slug);
+
+-- ─── Version history and content approval ────────────────────────────────────────────────
+-- One revision model for every authored resource (content, playlist, layout, slide_deck, widget):
+-- an immutable JSON snapshot of the state that was saved, who saved it and how, and where the
+-- bytes of a replaced media file were retained. lib/revisions.js owns the shape. Approval binds
+-- a submission to exactly one revision (its state hash), so approval can never transfer to
+-- content that changed after review. lib/release-policy.js is the single gate every publish
+-- path consults.
+CREATE TABLE IF NOT EXISTS revisions (
+    id              TEXT PRIMARY KEY,
+    workspace_id    TEXT,
+    resource_type   TEXT NOT NULL,                            -- content | playlist | layout | slide_deck | widget
+    resource_id     TEXT NOT NULL,
+    rev_no          INTEGER NOT NULL,
+    created_at      INTEGER NOT NULL,
+    actor_user_id   TEXT,
+    actor_kind      TEXT NOT NULL DEFAULT 'user',             -- user | api_token | import | mesh | system | baseline | restore
+    actor_label     TEXT,
+    summary         TEXT NOT NULL DEFAULT '',
+    state           TEXT NOT NULL,                            -- JSON, immutable
+    state_hash      TEXT NOT NULL,
+    file_ref        TEXT,                                     -- content: retained bytes, relative to the content dir
+    thumb_ref       TEXT,
+    parent_id       TEXT,
+    submission_id   TEXT,
+    published_at    INTEGER,
+    published_by    TEXT,
+    is_baseline     INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(resource_type, resource_id, rev_no)
+);
+CREATE INDEX IF NOT EXISTS idx_revisions_resource ON revisions(resource_type, resource_id, rev_no);
+CREATE INDEX IF NOT EXISTS idx_revisions_workspace ON revisions(workspace_id, created_at);
+
+CREATE TABLE IF NOT EXISTS submissions (
+    id              TEXT PRIMARY KEY,
+    workspace_id    TEXT NOT NULL,
+    resource_type   TEXT NOT NULL,
+    resource_id     TEXT NOT NULL,
+    revision_id     TEXT NOT NULL REFERENCES revisions(id),
+    state_hash      TEXT NOT NULL,
+    deps            TEXT NOT NULL DEFAULT '{}',               -- JSON: referenced asset revs at submission
+    note            TEXT,
+    submitted_by    TEXT,
+    submitted_at    INTEGER NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'submitted',        -- submitted | changes_requested | approved | withdrawn | superseded | published | cancelled
+    reviewer_id     TEXT,
+    decided_at      INTEGER,
+    comment         TEXT,
+    published_at    INTEGER,
+    published_by    TEXT,
+    version         INTEGER NOT NULL DEFAULT 1,               -- optimistic concurrency for reviews
+    updated_at      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_submissions_queue ON submissions(workspace_id, status, submitted_at);
+CREATE INDEX IF NOT EXISTS idx_submissions_resource ON submissions(resource_type, resource_id, status);
+
+CREATE TABLE IF NOT EXISTS workspace_reviewers (
+    workspace_id    TEXT NOT NULL,
+    user_id         TEXT NOT NULL,
+    added_by        TEXT,
+    created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    PRIMARY KEY (workspace_id, user_id)
 );

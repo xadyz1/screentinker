@@ -51,6 +51,9 @@ class ZoneManager(
     var currentLayoutId: String? = null
         private set
     var lastAssignmentSig: String? = null
+    // Geometry of the zones currently built. Editing a layout in place keeps its id, so the id
+    // alone cannot tell "same layout, same zones" from "same layout, zones changed".
+    var lastZoneSig: String? = null
 
     // #74/#75: device-effective IANA timezone for per-item schedule evaluation.
     @Volatile private var effectiveTimezone: String? = null
@@ -207,9 +210,24 @@ class ZoneManager(
             widgetType != null -> {
                 val widgetId = a.optString("widget_id", "")
                 val webView = createWebView()
+                // rev, exactly as the fullscreen path does: a widget's id does not change when it
+                // is edited, so without it a zone kept rendering the old content indefinitely.
+                val wRev = a.optLong("widget_rev", 0L)
                 val wUrl = "$renderServerUrl/api/widgets/$widgetId/render" +
-                    (if (renderDeviceId.isNotEmpty()) "?device=" + android.net.Uri.encode(renderDeviceId) else "")
+                    (if (renderDeviceId.isNotEmpty()) "?device=" + android.net.Uri.encode(renderDeviceId) else "?d=") +
+                    "&rev=" + wRev
                 webView.loadUrl(wUrl)
+                webView.layoutParams = params
+                container.addView(webView); zoneViews[zone.id] = webView
+                if (multi) scheduleZoneAdvance(zone.id, durationMs, advance)
+            }
+            // HTML bundle - the server's flattened document, in a WebView like a widget. `rev` is
+            // content_rev so a replaced archive actually reloads; without this branch a bundle in a
+            // zone matched nothing, rendered an empty view and never advanced.
+            mimeType == ItemTiming.BUNDLE_MIME -> {
+                val webView = createWebView()
+                val bRev = a.optLong("content_rev", 0L)
+                webView.loadUrl("$renderServerUrl/api/content/" + a.optString("content_id", "") + "/bundle?rev=" + bRev)
                 webView.layoutParams = params
                 container.addView(webView); zoneViews[zone.id] = webView
                 if (multi) scheduleZoneAdvance(zone.id, durationMs, advance)
@@ -244,6 +262,14 @@ class ZoneManager(
                     if (multi) addListener(object : Player.Listener {
                         override fun onPlaybackStateChanged(state: Int) {
                             if (state == Player.STATE_ENDED) handler.post { advance() }
+                        }
+                        // Same reason MediaPlayerManager treats a playback error as a completion
+                        // ("Root-2: a corrupt/undecodable video used to freeze the playlist
+                        // forever"): an error lands in STATE_IDLE, never STATE_ENDED, so without
+                        // this the zone stops rotating and goes black until the layout changes or
+                        // the app restarts — while every other zone keeps going.
+                        override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                            handler.post { advance() }
                         }
                     })
                     prepare()

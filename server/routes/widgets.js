@@ -4,10 +4,12 @@ const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');
+const { devicesPlayingWidget } = require('../lib/devices-playing');
+const slideRender = require('../lib/slide-render');
 const appConfig = require('../config');
 const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
-// Phase 2.2d: workspace-aware access. Same pattern as devices.js / content.js.
 const { accessContext } = require('../lib/tenancy');
+const { isRealTimezone } = require('../lib/device-timezone');
 
 // For preview only: inline /api/content/:id/file and /thumbnail URLs as data URIs,
 // scoped to the caller's current workspace. Lets the srcdoc preview iframe show
@@ -49,10 +51,53 @@ function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-// Validate timezone format (e.g. America/New_York, UTC, Etc/GMT+5)
+/*
+ * Is this an actual IANA zone? (#316)
+ *
+ * ⚠️ CHARACTER-SHAPE IS NOT VALIDATION. This used to test the string against a character class,
+ * which passes anything spelled like a zone and rejects anything spelled unusually, neither of
+ * which is the question. A Spanish operator hit both halves of that in one sitting:
+ *
+ *   "España"  -> the 'ñ' fails a character class -> silently fell back to UTC -> clock two hours
+ *                behind, with nothing anywhere saying why.
+ *   "Spain"   -> passes a character class, is not a zone -> toLocaleTimeString throws RangeError
+ *   "GMT+2"   -> inside the generated widget script -> the clock renders NOTHING at all.
+ *
+ * Intl is the only thing that actually knows, so ask it. Kept as a fallback for configs already
+ * stored with a bad value (a blank clock is worse than a wrong one); new values are rejected at
+ * save time by validateTimezone below, so nobody silently gets UTC again.
+ */
 function safeTimezone(tz) {
   if (!tz) return 'UTC';
-  return /^[A-Za-z_\-\/+0-9]+$/.test(tz) ? tz : 'UTC';
+  return isRealTimezone(tz) ? tz : 'UTC';
+}
+
+/*
+ * A BCP-47 tag, structurally — same approach and same expression as slide-render.js's LOCALE_RE.
+ *
+ * ⚠️ EMPTY MEANS "THE PLAYER'S OWN LOCALE", NOT ENGLISH (#323). The clock and date were formatted
+ * with a hardcoded 'en-US', so a Spanish operator got "Wednesday, September 3" on a screen whose
+ * dashboard, timezone and audience were all Spanish, with no setting anywhere to change it. An
+ * empty locale now yields `undefined`, which is how toLocaleTimeString is told to use the runtime's
+ * own locale — the right default for a screen standing in a particular country.
+ */
+const LOCALE_RE = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$/;
+function safeLocale(l) {
+  if (!l || typeof l !== 'string') return 'undefined';      // literal `undefined` in the emitted JS
+  return LOCALE_RE.test(l) ? `'${l}'` : 'undefined';
+}
+
+/*
+ * Save-time gate. Returns an error string, or null when the value is fine. A widget config is
+ * accepted or refused as a whole, so this is called before the insert/update rather than at render,
+ * where the only options left are "wrong time" or "no time".
+ */
+function validateTimezone(config) {
+  const tz = config && config.timezone;
+  if (tz === undefined || tz === null || tz === '') return null;   // absent is fine: safeTimezone -> UTC
+  if (isRealTimezone(tz)) return null;
+  return `"${String(tz).slice(0, 60)}" is not a time zone. Use an IANA name such as Europe/Madrid, `
+       + 'America/New_York or UTC — a country name or a GMT offset will not work.';
 }
 
 // Validate ISO date string format
@@ -102,12 +147,27 @@ router.post('/', (req, res) => {
   if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before creating widgets.' });
   const { widget_type, name, config } = req.body;
   if (!widget_type || !name) return res.status(400).json({ error: 'widget_type and name required' });
+  const tzErr = validateTimezone(config);
+  if (tzErr) return res.status(400).json({ error: tzErr });
 
   const id = uuidv4();
   db.prepare('INSERT INTO widgets (id, user_id, workspace_id, widget_type, name, config) VALUES (?, ?, ?, ?, ?, ?)')
     .run(id, req.user.id, req.workspaceId, widget_type, name, JSON.stringify(config || {}));
 
+  require('../lib/revisions').recordCurrent(db, 'widget', id, { actor: require('../lib/releases').actorOf(req), summary: 'Created' });
   res.status(201).json(db.prepare('SELECT * FROM widgets WHERE id = ?').get(id));
+});
+
+/*
+ * The bundled font catalogue, for the slide editor's font picker.
+ *
+ * ⚠️ SERVED RATHER THAN DUPLICATED IN THE FRONTEND. The editor previewing a family the renderer
+ * does not have — or offering one it dropped — makes the tool a liar about the thing it exists to
+ * show. One list, defined next to the files themselves.
+ */
+router.get('/slide-fonts', (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.json({ fonts: require('../lib/slide-fonts').catalogue() });
 });
 
 // Phase 2.2d: workspace-aware access. Mirrors the device/content pattern.
@@ -154,8 +214,51 @@ router.put('/:id', (req, res) => {
   if (!widget) return;
 
   const { name, config } = req.body;
+  const tzErr = validateTimezone(config);
+  if (tzErr) return res.status(400).json({ error: tzErr });
+
+  /*
+   * Approval on: the edit becomes a DRAFT. Players keep rendering `config` (their rev is
+   * updated_at, which does not move), the editor shows the draft, and the draft goes live only
+   * through a reviewed submission (lib/releases.js releaseWidgetDraft). Approval off: in place,
+   * exactly as before, plus a revision so history knows what was saved.
+   */
+  const policy = require('../lib/release-policy');
+  const revisions = require('../lib/revisions');
+  const actor = require('../lib/releases').actorOf(req);
+  if (widget.workspace_id && policy.approvalRequired(db, widget.workspace_id)) {
+    const current = revisions.parseJson(widget.draft_config, null) || { name: widget.name, config: JSON.parse(widget.config || '{}') };
+    const draft = { name: name || current.name, config: config || current.config };
+    db.prepare('UPDATE widgets SET draft_config = ? WHERE id = ?').run(JSON.stringify(draft), req.params.id);
+    revisions.recordCurrent(db, 'widget', req.params.id, { actor, summary: 'Saved draft' });
+    return res.json({ ...db.prepare('SELECT * FROM widgets WHERE id = ?').get(req.params.id), draft: true, pending_review: true });
+  }
   if (name) db.prepare('UPDATE widgets SET name = ?, updated_at = strftime(\'%s\',\'now\') WHERE id = ?').run(name, req.params.id);
   if (config) db.prepare('UPDATE widgets SET config = ?, updated_at = strftime(\'%s\',\'now\') WHERE id = ?').run(JSON.stringify(config), req.params.id);
+  revisions.recordCurrent(db, 'widget', req.params.id, { actor, summary: 'Saved' });
+
+  // Push the change to any display currently showing this widget. Editing a widget used to
+  // notify nothing at all: the render endpoint serves live config, but a player that already has
+  // the widget on screen keeps its WebView (deliberately — re-navigating a widget every duration
+  // is a visible flash and destroys widget state). With no push and no change to the URL, an edit
+  // reached the screen only when the app was restarted. Reported on #234: "I changed the text and
+  // the new text did not appear on the screen. I had to close the app and then open again."
+  //
+  // The push is what makes it prompt; the rev in the payload is what makes the player reload.
+  try {
+    const io = req.app.get('io');
+    if (io) {
+      const { buildPlaylistPayload } = require('../ws/deviceSocket');
+      const commandQueue = require('../lib/command-queue');
+      // ⚠️ Resolved AND nesting-aware — see lib/devices-playing.js. This joined on
+      // devices.playlist_id, which is NULL for a screen that inherits, and looked only at the
+      // top-level rows, so a widget inside a nested playlist matched nothing either. Both cases
+      // meant an edited widget simply never reached those screens.
+      for (const id of devicesPlayingWidget(req.params.id)) {
+        commandQueue.queueOrEmitPlaylistUpdate(io.of('/device'), id, buildPlaylistPayload);
+      }
+    }
+  } catch (e) { /* best-effort; the heartbeat refresh still picks it up */ }
 
   res.json(db.prepare('SELECT * FROM widgets WHERE id = ?').get(req.params.id));
 });
@@ -169,19 +272,58 @@ router.delete('/:id', (req, res) => {
 });
 
 const KNOWN_WIDGET_TYPES = new Set(['clock','weather','rss','text','webpage','social','directory-board','directory-search','diag-smoothness']);
-function renderWidgetHtml(type, config) {
+function renderWidgetHtml(type, config, opts = {}) {
+  const iframeSandbox = opts.iframeSandbox || 'allow-scripts';
   config = config || {};
   switch (type) {
     case 'clock': return renderClock(config);
     case 'weather': return renderWeather(config);
     case 'rss': return renderRSS(config);
-    case 'text': return renderText(config);
-    case 'webpage': return renderWebpage(config);
+    case 'text': return renderText(config, iframeSandbox);
+    case 'webpage': return renderWebpage(config, iframeSandbox);
     case 'social': return renderSocial(config);
     case 'directory-board': return renderDirectoryBoard(config);
     case 'directory-search': return renderDirectorySearch(config);
     case 'diag-smoothness': return renderDiagSmoothness(config);
+    /*
+     * ⚠️ THE ONLY WIDGET WHOSE CONTENT IS NOT BAKED INTO ITS CONFIG. A slide keeps its layout in
+     * `config.template` and its words in `config.fields`, and they are joined here — which is what
+     * makes it possible to come back and change a headline without rebuilding the layout, and
+     * therefore what makes editing one later work at all. See lib/slide-render.js.
+     */
+    case 'slide': return slideRender.renderSlideHtml(config, {
+      resolveImage: opts.resolveImage, resolveFont: opts.resolveFont,
+      resolveData: opts.resolveData, dataSources: opts.dataSources,
+    });
     default: return '<html><body style="color:white;background:black;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><h1>Unknown widget</h1></body></html>';
+  }
+}
+
+// The widget editor's Preview is framed by the DASHBOARD, from the dashboard's own
+// origin, and the dashboard keeps its session JWT in localStorage. So preview HTML is
+// pinned to the isolating sandbox and never consults the org setting: otherwise anyone
+// who can author a widget (workspace_editor and up) could run script in the dashboard
+// origin and lift the session of whichever admin clicked Preview.
+//
+// The org setting exists so PLAYERS can embed origin-strict third-party sites. A player
+// runs on a kiosk with a device token, which is the risk the confirmation modal
+// describes; an admin's dashboard session is not.
+const PREVIEW_IFRAME_SANDBOX = 'allow-scripts';
+
+function widgetIframeSandboxForWorkspace(workspaceId) {
+  if (!workspaceId) return 'allow-scripts';
+  try {
+    const row = db.prepare(`
+      SELECT COALESCE(o.widget_sandbox_isolation_disabled, 0) AS disabled
+      FROM workspaces ws
+      LEFT JOIN organizations o ON o.id = ws.organization_id
+      WHERE ws.id = ?
+    `).get(workspaceId);
+    return Number(row?.disabled || 0) === 1
+      ? 'allow-scripts allow-same-origin'
+      : 'allow-scripts';
+  } catch (_) {
+    return 'allow-scripts';
   }
 }
 
@@ -190,18 +332,91 @@ router.get('/:id/render', (req, res) => {
   const widget = db.prepare('SELECT * FROM widgets WHERE id = ?').get(req.params.id);
   if (!widget) return res.status(404).send('Widget not found');
   const config = JSON.parse(widget.config || '{}');
+  const iframeSandbox = widgetIframeSandboxForWorkspace(widget.workspace_id);
   // This page is DESIGNED to be embedded by the player, which frames it in a
   // sandboxed (allow-scripts, no allow-same-origin) iframe = a null origin. The
   // global helmet X-Frame-Options: SAMEORIGIN refuses that (null != same), so
   // widgets render blank in the web player. Drop it here; the sandbox - not
   // X-Frame-Options - is what isolates the widget (it can't read the dashboard JWT).
   res.removeHeader('X-Frame-Options');
-  // Never cache the render: widget data (clock/weather/rss/directory) changes, and
-  // a cached copy from before the X-Frame-Options change would keep showing blank.
-  res.setHeader('Cache-Control', 'no-store');
+  // Caching is keyed on whether the caller pinned a revision.
+  //
+  // A URL carrying ?rev=<widget.updated_at> is content-addressed: those exact bytes cannot change
+  // without the rev changing, so it is safe to cache hard — and it NEEDS to be, because a player
+  // that loses its network must still be able to render its widgets. Offline resilience is the
+  // point of the player's cache, and no-store made widgets the one thing it could never keep.
+  //
+  // A URL with no rev is the old shape and stays uncacheable: nothing distinguishes one render
+  // from the next, so a cached copy could serve content the operator has already changed.
+  if (req.query.rev) {
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  } else {
+    res.setHeader('Cache-Control', 'no-store');
+  }
   res.setHeader('Content-Type', 'text/html');
-  res.send(renderWidgetHtml(widget.widget_type, config));
+  res.send(renderWidgetHtml(widget.widget_type, config, {
+    iframeSandbox,
+    resolveImage: imageResolverFor(widget),
+    resolveFont: require('./fonts').fontResolverFor(widget),
+    resolveData: dataResolverFor(widget),
+  }));
 });
+
+/*
+ * Data source dynamic variable resolver scoped to the widget's workspace.
+ */
+function dataResolverFor(widgetOrWorkspaceId) {
+  const wsId = typeof widgetOrWorkspaceId === 'string' ? widgetOrWorkspaceId : (widgetOrWorkspaceId?.workspace_id || null);
+  if (!wsId) return () => null;
+  let dataMap = null;
+  let loaded = false;
+  return (slug, key) => {
+    try {
+      if (!loaded) {
+        dataMap = require('../lib/data-sources/service').getWorkspaceDataMapSync(wsId);
+        loaded = true;
+      }
+      const dsData = dataMap ? (dataMap[slug] || dataMap[slug.toLowerCase()]) : null;
+      if (dsData && dsData[key] !== undefined && dsData[key] !== null) {
+        return dsData[key];
+      }
+    } catch (_) {}
+    return null;
+  };
+}
+
+/*
+ * Turn a slide's `content_id` into a URL, or into nothing.
+ *
+ * ⚠️ SCOPED TO THE WIDGET'S OWN WORKSPACE, AND THAT IS THE WHOLE JOB. The id comes out of a config
+ * blob that a workspace editor authored, so it is a value a user typed — nothing stops somebody
+ * pasting an id belonging to another tenant, and a resolver that simply looked up the row would
+ * then embed another customer's photo in their slide and serve it from this origin. Read as: a
+ * slide may only ever show media its own workspace already owns.
+ *
+ * A widget with no workspace is a PLATFORM TEMPLATE (see checkWidgetRead), so it is held to the
+ * matching rule — platform content only — rather than being treated as unscoped.
+ */
+function imageResolverFor(widget) {
+  return (contentId) => {
+    if (!contentId) return null;
+    try {
+      const row = widget.workspace_id
+        ? db.prepare('SELECT filepath, remote_url FROM content WHERE id = ? AND workspace_id = ?')
+            .get(contentId, widget.workspace_id)
+        : db.prepare('SELECT filepath, remote_url FROM content WHERE id = ? AND workspace_id IS NULL')
+            .get(contentId);
+      if (!row) return null;
+      // remote_url content is a URL the operator supplied and the player already fetches directly;
+      // an uploaded file is served from this origin. Either way the slide references, never inlines
+      // — the designer's base64 habit is how one widget config in the wild reached 2.71 MB.
+      if (row.remote_url) return row.remote_url;
+      return row.filepath ? `/uploads/content/${encodeURIComponent(row.filepath)}` : null;
+    } catch (e) {
+      return null;
+    }
+  };
+}
 
 // Public JSON feed of a directory board's entries. A directory-search page polls
 // this to reflect board edits without a reload. It exposes only the same data
@@ -224,7 +439,19 @@ router.get('/:id/data.json', (req, res) => {
 
 // Latest frame-rate telemetry per widget, reported by the diag-smoothness widget running on a device.
 // In-memory (diagnostic, not persisted) — a device page reads the snapshot for the widget it plays.
-const widgetTelemetry = new Map();
+//
+// BOUNDED, because the writer is unauthenticated (the widget runs in a null-origin sandboxed
+// iframe and cannot carry a session) and the key comes from the request body. An uncapped map
+// keyed on caller-supplied values is a remote memory-exhaustion path, and on this product a dead
+// server means the whole fleet reconnects at once.
+//
+// The cap is GLOBAL rather than per-IP on purpose: signage sites egress through one NAT address,
+// so a per-IP limit would punish an entire venue for one noisy panel while doing nothing about a
+// distributed writer. Same reasoning as lib/ota-download-guard ("NEVER per-IP (SNAT)"). Eviction
+// is least-recently-written, and a live panel rewrites its key every 2.5s, so only entries the
+// dashboard would already call stale (>15s) are ever eligible.
+const widgetTelemetry = require('../lib/bounded-snapshot-store').createStore({ max: 500, ttlMs: 60_000 });
+widgetTelemetry.startSweep();
 // Public POST from the widget: it runs in a null-origin sandboxed iframe, so this must be no-auth +
 // CORS-open. The widget sends text/plain (a "simple" request → no CORS preflight); we JSON.parse it.
 router.post('/:id/telemetry', express.text({ type: '*/*', limit: '16kb' }), (req, res) => {
@@ -236,7 +463,11 @@ router.post('/:id/telemetry', express.text({ type: '*/*', limit: '16kb' }), (req
   // fall back to a widget-scoped key for players that don't pass a device id yet.
   const key = (t.device && String(t.device).slice(0, 64)) || ('w:' + req.params.id);
   widgetTelemetry.set(key, t);
-  res.json({ ok: true });
+  // 204, not res.json(): this is fire-and-forget diagnostic data and the reporting widget ignores
+  // the response entirely (routes/widgets.js renderDiagSmoothness -> fetch(...).catch()). It also
+  // keeps services/activity.js activityLogger — which wraps res.json — from writing an activity_log
+  // row per unauthenticated report, i.e. from letting an anonymous caller grow a DB table.
+  res.status(204).end();
 });
 // Public GET so the dashboard device page can display the snapshot. ?device=<id> reads that panel's
 // report; without it (or if that panel hasn't reported) falls back to the widget-scoped snapshot.
@@ -247,8 +478,10 @@ router.get('/:id/telemetry', (req, res) => {
   // Device-scoped request returns ONLY that device's report — NO widget-wide fallback, or one
   // reporting panel's data would show on every other device's page (incl. offline ones). A request
   // with no device id gets the widget-scoped snapshot (raw/debug view only).
-  const rec = dev ? (widgetTelemetry.get(dev) || null) : (widgetTelemetry.get('w:' + req.params.id) || null);
-  res.json(rec);
+  // get() returns null for a missing OR expired entry, so a stale snapshot is never served
+  // as live even between sweeps.
+  const rec = dev ? widgetTelemetry.get(dev) : widgetTelemetry.get('w:' + req.params.id);
+  res.json(rec || null);
 });
 
 // Preview unsaved widget from config (used by editor Preview button)
@@ -256,7 +489,15 @@ router.post('/preview', (req, res) => {
   const { widget_type, config } = req.body || {};
   if (!widget_type || typeof widget_type !== 'string') return res.status(400).json({ error: 'widget_type required' });
   if (!KNOWN_WIDGET_TYPES.has(widget_type)) return res.status(400).json({ error: 'Unknown widget_type' });
-  let html = renderWidgetHtml(widget_type, config || {});
+  // Preview renders inside the DASHBOARD origin, so it never opts into same-origin —
+  // see PREVIEW_IFRAME_SANDBOX.
+  const resolveData = dataResolverFor(req.workspaceId);
+  const resolveFont = req.workspaceId ? require('./fonts').fontResolverFor({ workspace_id: req.workspaceId }) : undefined;
+  let html = renderWidgetHtml(widget_type, config || {}, {
+    iframeSandbox: PREVIEW_IFRAME_SANDBOX,
+    resolveData,
+    resolveFont,
+  });
   if (req.workspaceId) html = inlineUserContent(html, req.workspaceId);
   res.setHeader('Content-Type', 'text/html');
   res.send(html);
@@ -278,7 +519,14 @@ router.post('/preview-session', (req, res) => {
   if (!widget_type || typeof widget_type !== 'string') return res.status(400).json({ error: 'widget_type required' });
   if (!KNOWN_WIDGET_TYPES.has(widget_type)) return res.status(400).json({ error: 'Unknown widget_type' });
   const id = uuidv4();
-  const html = renderWidgetHtml(widget_type, config || {});
+  // Same reasoning as /preview — dashboard origin, never same-origin.
+  const resolveData = dataResolverFor(req.workspaceId);
+  const resolveFont = req.workspaceId ? require('./fonts').fontResolverFor({ workspace_id: req.workspaceId }) : undefined;
+  const html = renderWidgetHtml(widget_type, config || {}, {
+    iframeSandbox: PREVIEW_IFRAME_SANDBOX,
+    resolveData,
+    resolveFont,
+  });
   previewStore.set(id, { html, widget_type, created: Date.now() });
   res.json({ id, url: `/api/widgets/preview-session/${id}` });
 });
@@ -309,9 +557,10 @@ function renderClock(c) {
 ${c.show_date !== false ? '<div id="date"></div>' : ''}
 <script>
 function update() {
-  const opts = { hour12: ${c.format !== '24h'}, timeZone: '${safeTimezone(c.timezone)}', hour:'2-digit', minute:'2-digit', second:'2-digit' };
-  document.getElementById('time').textContent = new Date().toLocaleTimeString('en-US', opts);
-  ${c.show_date !== false ? `document.getElementById('date').textContent = new Date().toLocaleDateString('en-US', { timeZone: '${safeTimezone(c.timezone)}', weekday:'long', year:'numeric', month:'long', day:'numeric' });` : ''}
+  // show_seconds defaults TRUE so existing widgets keep the clock they already had (#323).
+  const opts = { hour12: ${c.format !== '24h'}, timeZone: '${safeTimezone(c.timezone)}', hour:'2-digit', minute:'2-digit'${c.show_seconds === false ? '' : ", second:'2-digit'"} };
+  document.getElementById('time').textContent = new Date().toLocaleTimeString(${safeLocale(c.locale)}, opts);
+  ${c.show_date !== false ? `document.getElementById('date').textContent = new Date().toLocaleDateString(${safeLocale(c.locale)}, { timeZone: '${safeTimezone(c.timezone)}', weekday:'long', year:'numeric', month:'long', day:'numeric' });` : ''}
 }
 setInterval(update, 1000); update();
 </script></body></html>`;
@@ -321,28 +570,47 @@ function renderWeather(c) {
   return `<!DOCTYPE html><html><head><style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { background:${safeCss(c.background, 'transparent')}; display:flex; align-items:center; justify-content:center; height:100vh; font-family:-apple-system,sans-serif; color:${safeCss(c.color, '#FFF')}; }
-  .weather { text-align:center; }
-  .temp { font-size:${safeNumber(c.font_size, 48)}px; font-weight:700; }
-  .location { font-size:18px; opacity:0.7; margin-top:4px; }
-  .desc { font-size:16px; opacity:0.6; margin-top:8px; }
-  .icon { font-size:64px; }
-</style></head><body>
+  /*
+   * #324: EVERYTHING SCALES, OR NOTHING DOES.
+   *
+   * Only .temp was tied to font_size; location, description and icon were pinned at 18px, 16px
+   * and 64px. In a small zone the icon alone is 64px whatever the space, the content overflows,
+   * and the widget gets a scrollbar - reported as "the font size does change, but nothing else".
+   * No Fit setting could help, because Fit places the widget's output rather than laying it out.
+   * The other three are derived from the same base size now, so one control moves all of them.
+   */
+  .weather { text-align:center; max-width:100%; max-height:100%; }
+  .temp { font-size:${safeNumber(c.font_size, 48)}px; font-weight:700; line-height:1.1; }
+  .location { font-size:${Math.max(10, Math.round(safeNumber(c.font_size, 48) * 0.34))}px; opacity:0.7; margin-top:2px; }
+  .desc { font-size:${Math.max(10, Math.round(safeNumber(c.font_size, 48) * 0.30))}px; opacity:0.6; margin-top:4px; }
+  .icon { font-size:${Math.max(14, Math.round(safeNumber(c.font_size, 48) * 1.2))}px; line-height:1; }
+  /* A signage widget must never offer a scrollbar. If it still does not fit, it clips. */
+  html, body { overflow:hidden; }
+  body.horizontal .weather { display:flex; align-items:center; justify-content:center; gap:${Math.max(6, Math.round(safeNumber(c.font_size, 48) * 0.25))}px; text-align:left; }
+</style></head><body class="${c.layout === 'horizontal' ? 'horizontal' : ''}">
 <div class="weather">
   <div class="icon" id="icon"></div>
-  <div class="temp" id="temp">--</div>
-  <div class="location">${escapeHtml(c.location) || 'Unknown'}</div>
-  <div class="desc" id="desc"></div>
+  <div>
+    <div class="temp" id="temp">--</div>
+    ${c.show_location === false ? '' : `<div class="location">${escapeHtml(c.location) || 'Unknown'}</div>`}
+    <div class="desc" id="desc"></div>
+  </div>
 </div>
 <script>
 async function load() {
   try {
-    const r = await fetch('https://wttr.in/${encodeURIComponent(c.location || 'New York')}?format=j1');
+    // #324: wttr.in accepts lang=, so "Sunny" can arrive in the operator's language rather than
+    // always English. Same locale field the clock gained in #323; blank leaves wttr.in's default.
+    const r = await fetch('https://wttr.in/${encodeURIComponent(c.location || 'New York')}?format=j1${/^[A-Za-z]{2}$/.test(String(c.locale || '').slice(0, 2)) ? '&lang=' + String(c.locale).slice(0, 2).toLowerCase() : ''}');
     const d = await r.json();
     const cur = d.current_condition[0];
     const unit = '${c.units === 'metric' ? 'temp_C' : 'temp_F'}';
     const deg = '${c.units === 'metric' ? '°C' : '°F'}';
     document.getElementById('temp').textContent = cur[unit] + deg;
-    document.getElementById('desc').textContent = cur.weatherDesc[0].value;
+    // With lang=, wttr.in returns localised text under lang_<code>; fall back to English.
+    const langKey = Object.keys(cur).find((k) => k.startsWith('lang_'));
+    document.getElementById('desc').textContent =
+      (langKey && cur[langKey] && cur[langKey][0] && cur[langKey][0].value) || cur.weatherDesc[0].value;
     const code = parseInt(cur.weatherCode);
     const icons = {113:'☀️',116:'⛅',119:'☁️',122:'☁️',143:'🌫️',176:'🌧️',200:'⛈️',227:'🌨️',260:'🌫️',263:'🌧️',266:'🌧️',293:'🌧️',296:'🌧️',299:'🌧️',302:'🌧️',305:'🌧️',308:'🌧️',311:'🌧️',314:'🌧️',317:'🌧️',320:'🌨️',323:'🌨️',326:'🌨️',329:'🌨️',332:'🌨️',335:'🌨️',338:'🌨️',350:'🌧️',353:'🌧️',356:'🌧️',359:'🌧️',362:'🌨️',365:'🌨️',368:'🌨️',371:'🌨️',374:'🌨️',377:'🌨️',386:'⛈️',389:'⛈️',392:'⛈️',395:'🌨️'};
     document.getElementById('icon').textContent = icons[code] || '🌡️';
@@ -353,40 +621,151 @@ load(); setInterval(load, 600000);
 }
 
 function renderRSS(c) {
+  // scroll_speed is authored in the UI as "seconds" (legacy field), but that used to be wired
+  // straight into animation-duration: a *fixed total time* for the whole strip to cross the
+  // screen. That makes the on-screen speed depend on how much content there is - a feed with
+  // many items gets dragged through in the same {scroll_speed}s as a feed with one, so it
+  // flies past far too fast, never lets the reader finish, and simply "jumps back to the
+  // start" once the fixed duration is up. Instead we treat scroll_speed as calibrating a
+  // constant px/sec rate (using one viewport-width per scroll_speed seconds as the reference,
+  // matching prior behaviour for content that fits in one screen), then measure the actual
+  // rendered width of the ticker and derive a duration long enough to move that full distance
+  // at the same constant speed - so more items simply take proportionally longer, and every
+  // item scrolls fully into and out of view before the loop restarts.
+  const scrollSpeedSec = safeNumber(c.scroll_speed, 30);
   return `<!DOCTYPE html><html><head><style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { background:${safeCss(c.background, '#000')}; height:100vh; overflow:hidden; font-family:-apple-system,sans-serif; }
-  .ticker { display:flex; align-items:center; height:100%; white-space:nowrap; animation:scroll ${safeNumber(c.scroll_speed, 30)}s linear infinite; }
+  .ticker { display:flex; align-items:center; height:100%; white-space:nowrap; position:relative; will-change:transform; }
   .item { display:inline-block; padding:0 40px; font-size:${safeNumber(c.font_size, 24)}px; color:${safeCss(c.color, '#FFF')}; }
   .item .title { font-weight:600; }
   .item .sep { margin:0 20px; opacity:0.3; }
-  @keyframes scroll { 0%{transform:translateX(100vw)} 100%{transform:translateX(-100%)} }
 </style></head><body>
 <div class="ticker" id="ticker"><div class="item">Loading feed...</div></div>
 <script>
+var SCROLL_SPEED_SEC = ${scrollSpeedSec};
+var ticker = document.getElementById('ticker');
+var anim = null;
+function restartAnimation() {
+  if (anim) { anim.cancel(); anim = null; }
+  var viewportW = window.innerWidth;
+  var tickerW = ticker.scrollWidth;
+  // Reference speed: one viewport-width travelled every SCROLL_SPEED_SEC seconds, so the
+  // default of 30s behaves the same as before for a feed that fits within one screen.
+  var pxPerSec = viewportW / SCROLL_SPEED_SEC;
+  var distance = viewportW + tickerW; // starts fully off-screen right, ends fully off-screen left
+  var durationMs = Math.max(1000, (distance / pxPerSec) * 1000);
+  anim = ticker.animate(
+    [
+      { transform: 'translateX(' + viewportW + 'px)' },
+      { transform: 'translateX(-' + tickerW + 'px)' },
+    ],
+    { duration: durationMs, iterations: Infinity, easing: 'linear' }
+  );
+}
 async function load() {
   try {
     const r = await fetch('https://api.rss2json.com/v1/api.json?rss_url=' + encodeURIComponent('${escapeHtml(c.feed_url) || ''}'));
     const d = await r.json();
     const items = d.items?.slice(0, ${safeNumber(c.max_items, 10)}) || [];
     // NOTE: RSS feed titles are external content - using textContent instead of innerHTML to prevent XSS
-    document.getElementById('ticker').innerHTML = items.map(i => {
+    ticker.innerHTML = items.map(i => {
       const el = document.createElement('span'); el.textContent = i.title;
       return '<div class="item"><span class="title">' + el.innerHTML + '</span></div><div class="item sep">•</div>';
     }).join('') || '<div class="item">No items</div>';
-  } catch(e) { document.getElementById('ticker').innerHTML = '<div class="item">Feed unavailable</div>'; }
+  } catch(e) { ticker.innerHTML = '<div class="item">Feed unavailable</div>'; }
+  requestAnimationFrame(restartAnimation);
 }
+window.addEventListener('resize', restartAnimation);
 load(); setInterval(load, 300000);
 </script></body></html>`;
 }
 
-function renderText(c) {
-  // Designer preview uses fontSize/10 vw, but older published HTML used fontSize*10.8 px.
-  // Convert any px-based font sizes to vw so they scale to any viewport: px / 108 = vw
+function renderText(c, iframeSandbox = 'allow-scripts') {
   let html = c.html || '<p style="color:white;padding:20px">Empty text widget</p>';
-  html = html.replace(/font-size:\s*([\d.]+)px/g, (match, px) => {
-    return `font-size:${(parseFloat(px) / 108).toFixed(2)}vw`;
-  });
+
+  // LEGACY DESIGNER RESCUE — deliberately narrow.
+  //
+  // The Content Designer used to publish absolute font sizes as fontSize*10.8 px; today it emits
+  // cqw (see designer.js). Converting px/108 back to vw restores the author's intended size and
+  // makes those old widgets scale to any screen.
+  //
+  // It must NOT touch hand-authored HTML. This regex used to run over EVERY text widget, so
+  // someone writing `font-size:16px` in the Text/HTML editor got 0.15vw — 2.8px on a 1080p
+  // screen, and smaller still on anything narrower. Their text was not clipped or hidden; it was
+  // rendered too small to read, in the one widget whose whole purpose is hand-written HTML.
+  //
+  // Designer output is identified by its absolutely-positioned elements, the same signal the
+  // dashboard uses to decide whether a text widget can be reopened in the designer. Hand-written
+  // markup keeps its px exactly as typed.
+  const isDesignerAuthored = /position:\s*absolute;\s*left:/.test(html);
+  if (isDesignerAuthored) {
+    html = html.replace(/font-size:\s*([\d.]+)px/g, (match, px) => {
+      return `font-size:${(parseFloat(px) / 108).toFixed(2)}vw`;
+    });
+  }
+
+  // What to do when the text is taller than the screen. It used to be clipped in silence: the
+  // document was overflow:hidden with no scrollbar and nothing to scroll it, so on a display
+  // shorter than the content the bottom simply vanished — reported as "text goes to bottom and
+  // disappears. It dont fit."
+  //
+  //   fit    (default) shrink until it fits. A no-op when the content already fits, so this
+  //          rescues widgets that are currently losing text without altering ones that are fine.
+  //   scroll pan through it on a loop, with a pause at each end. For content that is genuinely
+  //          longer than a screen, where shrinking it would make it unreadable.
+  //   clip   the old behaviour, kept because a designer-positioned layout may deliberately run
+  //          past the edge and must not be rescaled underneath the author.
+  const overflowMode = ['fit', 'scroll', 'clip'].includes(c.overflow) ? c.overflow : 'fit';
+
+  // Runs inside the sandboxed iframe (allow-scripts, null origin). Measures after layout, after
+  // web fonts settle, and on resize — a rotation or a resized zone changes the answer, and fonts
+  // loading late is the classic cause of a fit that was computed against the wrong height.
+  const fitScript = overflowMode === 'clip' ? '' : `<script>
+  (function () {
+    var mode = ${JSON.stringify(overflowMode)};
+    var wrap = document.getElementById('st-wrap');
+    if (!wrap) return;
+    var anim = null;
+    function apply() {
+      // Reset before measuring, or we measure the previous transform's result.
+      wrap.style.transform = '';
+      if (anim) { anim.cancel(); anim = null; }
+      var avail = document.documentElement.clientHeight;
+      var need = wrap.scrollHeight;
+      if (!avail || !need || need <= avail + 1) return;   // already fits: leave it alone
+      if (mode === 'fit') {
+        var k = avail / need;
+        wrap.style.transformOrigin = 'top center';
+        wrap.style.transform = 'scale(' + k + ')';
+        return;
+      }
+      // scroll: hold, pan the overflow, hold, return. Speed is distance-based so a long
+      // document is not unreadably fast and a short one is not tediously slow.
+      var over = need - avail;
+      var panMs = Math.max(4000, (over / 40) * 1000);
+      var holdMs = 2000;
+      var total = panMs * 2 + holdMs * 2;
+      var p1 = holdMs / total, p2 = (holdMs + panMs) / total, p3 = (holdMs * 2 + panMs) / total;
+      anim = wrap.animate(
+        [
+          { transform: 'translateY(0)', offset: 0 },
+          { transform: 'translateY(0)', offset: p1 },
+          { transform: 'translateY(' + (-over) + 'px)', offset: p2 },
+          { transform: 'translateY(' + (-over) + 'px)', offset: p3 },
+          { transform: 'translateY(0)', offset: 1 },
+        ],
+        { duration: total, iterations: Infinity, easing: 'linear' }
+      );
+    }
+    addEventListener('resize', apply);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(apply).catch(function(){});
+    // Late images change the height too; rAF lets first layout finish before measuring.
+    addEventListener('load', function () { requestAnimationFrame(apply); });
+    requestAnimationFrame(apply);
+  })();
+  </script>`;
+
   // Security: c.html / c.css are intentionally raw user-authored content, but the
   // render is public and same-origin with the dashboard - injected <script> could
   // otherwise read the dashboard's localStorage JWT. Render the user content inside
@@ -395,23 +774,26 @@ function renderText(c) {
   const inner = `<!DOCTYPE html><html><head><style>
   * { margin:0; padding:0; box-sizing:border-box; }
   html, body { width:100vw; height:100vh; overflow:hidden; }
+  /* The wrapper is what gets scaled or panned. It must be allowed to exceed the viewport,
+     otherwise there is nothing to measure and nothing to move. */
+  #st-wrap { width:100%; min-height:100%; will-change:transform; }
   ${c.css || ''}
-</style></head><body>${html}</body></html>`;
+</style></head><body><div id="st-wrap">${html}</div>${fitScript}</body></html>`;
   return `<!DOCTYPE html><html><head><style>
   * { margin:0; padding:0; }
   html, body { width:100vw; height:100vh; overflow:hidden; background:${safeCss(c.background, 'transparent')}; }
   iframe { width:100%; height:100%; border:0; display:block; }
-</style></head><body><iframe sandbox="allow-scripts" srcdoc="${escapeHtml(inner)}"></iframe></body></html>`;
+</style></head><body><iframe sandbox="${escapeHtml(iframeSandbox)}" srcdoc="${escapeHtml(inner)}"></iframe></body></html>`;
 }
 
-function renderWebpage(c) {
+function renderWebpage(c, iframeSandbox = 'allow-scripts') {
   const zoom = (c.zoom || 100) / 100;
   const invZoom = 100 / (c.zoom || 100) * 100;
   return `<!DOCTYPE html><html><head><style>
   * { margin:0; } body { height:100vh; overflow:hidden; }
   iframe { width:${invZoom}%; height:${invZoom}%; border:0; transform:scale(${zoom}); transform-origin:0 0; }
 </style></head><body>
-<iframe src="${escapeHtml(safeUrl(c.url))}" sandbox="allow-scripts"></iframe>
+<iframe src="${escapeHtml(safeUrl(c.url))}" sandbox="${escapeHtml(iframeSandbox)}"></iframe>
 ${c.refresh_interval > 0 ? `<script>setInterval(()=>document.querySelector('iframe').src=document.querySelector('iframe').src,${c.refresh_interval * 1000});</script>` : ''}
 </body></html>`;
 }
@@ -860,11 +1242,18 @@ function renderDirectorySearch(c) {
   .entry.available, .entry.available .id { color:#00ff00; }
   body.light .entry.available, body.light .entry.available .id { color:#059669; }
 
-  .keyboard { flex:0 0 auto; padding:8px 12px 14px; background:rgba(0,0,0,0.25); user-select:none; }
+  /* The keyboard is sized against the VIEWPORT, not in fixed px. A panel's CSS viewport is its
+     physical resolution divided by its density, so a 1080p screen at 240dpi presents only 1280x720
+     CSS px - and a keyboard laid out for 1920x1080 then eats ~37% of the height instead of ~24%.
+     The vh terms scale it down on short viewports; the clamp() maxima are the original values, so
+     a 1080-tall viewport renders pixel-identically to before (5.3vh and 2.3vh both exceed their
+     max at 1080 and clamp). The px minima keep the keys tappable on very short screens. */
+  .keyboard { flex:0 0 auto; padding:clamp(5px,0.8vh,8px) 12px clamp(8px,1.3vh,14px); background:rgba(0,0,0,0.25); user-select:none; }
   body.light .keyboard { background:rgba(0,0,0,0.05); }
-  .krow { display:flex; gap:6px; justify-content:center; margin-bottom:6px; }
+  .krow { display:flex; gap:clamp(4px,0.6vh,6px); justify-content:center; margin-bottom:clamp(4px,0.6vh,6px); }
   .key {
-    flex:1 1 0; max-width:96px; min-width:0; height:56px; font-size:24px; text-transform:uppercase;
+    flex:1 1 0; max-width:96px; min-width:0;
+    height:clamp(34px,5.3vh,56px); font-size:clamp(15px,2.3vh,24px); text-transform:uppercase;
     border:0; border-radius:8px; background:rgba(255,255,255,0.12); color:inherit; cursor:pointer;
   }
   .key:active { background:#4a9eff; color:#fff; }
@@ -876,7 +1265,7 @@ function renderDirectorySearch(c) {
     .header h1 { font-size:30px; }
     #q { font-size:26px; padding:14px 16px; }
     .entry { font-size:24px; }
-    .key { height:46px; font-size:20px; }
+    /* .key is viewport-scaled above - no fixed override here, it would undo the clamp. */
   }
 </style>
 </head>
@@ -999,6 +1388,14 @@ function renderDirectorySearch(c) {
 
   // ----- on-screen keyboard (drives the same filter path as typing) -----
   if (cfg.show_onscreen_keyboard) {
+    /* Tell the platform not to raise ITS keyboard for this field. We autofocus a real
+       <input>, which on Android is the signal to throw the system IME over the bottom of
+       the screen - directly on top of the keyboard we draw below, so a directory panel
+       showed Google's keyboard (mic, GIF and emoji keys included) and never showed its
+       own. The buttons write input.value directly, so suppressing the platform keyboard
+       costs nothing here. Ignored by browsers that don't know inputmode, which is the
+       right fallback: a desktop preview keeps behaving exactly as before. */
+    input.setAttribute('inputmode', 'none');
     var kb = document.getElementById('keyboard');
     function press(ch) { input.value += ch; try { input.focus(); } catch(e){} onInput(); }
     ['1234567890','qwertyuiop','asdfghjkl','zxcvbnm'].forEach(function(r){
@@ -1175,3 +1572,7 @@ function renderDiagSmoothness(config) {
 }
 
 module.exports = router;
+module.exports.renderWidgetHtml = renderWidgetHtml;
+module.exports.dataResolverFor = dataResolverFor;
+module.exports.imageResolverFor = imageResolverFor;
+module.exports.widgetIframeSandboxForWorkspace = widgetIframeSandboxForWorkspace;

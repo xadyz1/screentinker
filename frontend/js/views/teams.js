@@ -3,7 +3,20 @@ import { showToast } from '../components/toast.js';
 import { t, tn } from '../i18n.js';
 import { esc } from '../utils.js';
 
-const API = (url, opts = {}) => fetch('/api' + url, { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}`, ...opts.headers }, ...opts }).then(r => r.json());
+// A refused request must reject, not resolve.
+//
+// This helper used to end in `.then(r => r.json())`, so a 403/404/500 body resolved as an ordinary
+// value and the surrounding try/catch was unreachable — every handler took the failure for success.
+// Concretely: deleting a built-in layout template showed "Layout deleted" while the server had
+// returned 403 and the template was still there, and a rejected platform-role change showed "Role
+// updated" while the dropdown kept displaying a value the server refused (its revert lives only in
+// the dead catch). The shared client in api.js has always thrown on !res.ok; these local copies did
+// not. Same contract now, including the 401 session-expiry reload.
+const API = (url, opts = {}) => fetch('/api' + url, { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}`, ...opts.headers }, ...opts }).then(async (r) => {
+  if (r.status === 401) { localStorage.removeItem('token'); window.location.reload(); throw new Error('Session expired'); }
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || `Request failed (${r.status})`); }
+  return r.json();
+});
 
 export async function render(container) {
   const hash = window.location.hash;
@@ -36,6 +49,18 @@ async function renderList(container) {
   try {
     const teams = await API('/teams');
     const list = document.getElementById('teamsList');
+
+    // Teams is switched off server-side while it is redesigned: every endpoint answers 503 with
+    // an explanation. API() resolves the BODY whatever the status, so an object arrives where an
+    // array was expected — and `!teams.length` then rendered "No teams yet" over a feature that
+    // is not there, next to a New Team button that could only ever fail. Say what is actually
+    // happening, and take away the button that leads nowhere.
+    if (!Array.isArray(teams)) {
+      document.getElementById('newTeamBtn')?.remove();
+      list.innerHTML = `<div class="empty-state"><h3>${esc(t('team.unavailable_title'))}</h3>`
+        + `<p>${esc(teams && teams.message ? teams.message : t('team.unavailable_desc'))}</p></div>`;
+      return;
+    }
 
     if (!teams.length) {
       list.innerHTML = `<div class="empty-state"><h3>${t('team.empty_title')}</h3><p>${t('team.empty_desc')}</p></div>`;

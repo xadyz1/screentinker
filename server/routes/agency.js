@@ -17,6 +17,7 @@ const { listDesignatedPlaylists, isZonedPlaylist, folderSubtree } = require('../
 const { listLayoutGeometry } = require('../lib/agency-layouts');
 const { publishPlaylist } = require('./playlists'); // #73: shared publish path for auto-publish
 const { isConfigured } = require('../services/email'); // #73: gate digest enqueue on SMTP being set
+const { resolveItemDuration } = require('../lib/item-duration');
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -79,6 +80,8 @@ router.post('/content', checkStorageLimit, upload.single('file'), async (req, re
     const content = await ingestUploadedFile({ file: req.file, userId: req.user.id, workspaceId: req.workspaceId, folderId });
     res.status(201).json(content);
   } catch (e) {
+    // A non-media upload is the caller's error, not ours (lib/upload-sniff rejects it).
+    if (e && e.name === 'UnsupportedUploadError') return res.status(400).json({ error: e.message });
     console.error('agency upload error:', e.message);
     res.status(500).json({ error: 'Upload failed' });
   }
@@ -110,7 +113,9 @@ router.post('/playlists/:playlistId/items', (req, res) => {
   if (duration_sec != null && (typeof duration_sec !== 'number' || duration_sec < 1)) {
     return res.status(400).json({ error: 'duration_sec must be a positive integer' });
   }
-  duration_sec = duration_sec || content.duration_sec || 10;
+  // #237: the raw content duration used to be stored as probed (31.7s), and a fraction is
+  // truncated by the Android player's optInt read — so round to whole seconds here too.
+  duration_sec = resolveItemDuration(duration_sec, content);
 
   const sd = start_date ?? null, ed = end_date ?? null;
   for (const [k, v] of [['start_date', sd], ['end_date', ed]]) {
@@ -132,8 +137,18 @@ router.post('/playlists/:playlistId/items', (req, res) => {
   // 0 -> draft for admin re-publish. 1 -> the SHARED publishPlaylist path (snapshot + push).
   let published = false;
   if (req.apiToken.auto_publish) {
-    publishPlaylist(req.params.playlistId, req);
-    published = true;
+    // Through the release gate like every other publish. When the workspace requires approval
+    // the upload lands in the review queue instead, and the agency's own notification says draft.
+    try {
+      require('../lib/releases').releasePlaylist(db, req.params.playlistId, req, { actor: { userId: req.user && req.user.id || null, kind: 'api_token', label: req.apiToken.name || 'agency token' }, source: 'agency' });
+      published = true;
+    } catch (e) {
+      if (!e || e.name !== 'ReleaseError') throw e;
+      db.prepare("UPDATE playlists SET status = 'draft', updated_at = strftime('%s','now') WHERE id = ?").run(req.params.playlistId);
+      try {
+        require('../lib/approvals').submit(db, { type: 'playlist', id: req.params.playlistId, workspaceId: req.workspaceId, actor: { userId: req.user && req.user.id || null, kind: 'api_token', label: req.apiToken.name || 'agency token' }, note: 'Agency upload (auto-publish held for review)', ip: req.ip });
+      } catch (_) { /* already queued for this state */ }
+    }
   } else {
     db.prepare("UPDATE playlists SET status = 'draft', updated_at = strftime('%s','now') WHERE id = ?").run(req.params.playlistId);
   }

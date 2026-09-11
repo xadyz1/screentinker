@@ -137,6 +137,29 @@ h1, h2, h3, h4, h5, h6, .logo {
 }
 .workspace-switcher-item:hover .workspace-switcher-pencil { visibility: visible; }
 .workspace-switcher-pencil:hover { color: var(--accent); background: var(--bg-input); }
+/* "New workspace" — a full-width action UNDER the selector, in both the single and dropdown views.
+   ⚠️ ALWAYS VISIBLE, unlike the rename/members icons beside it, which reveal on hover. Those
+   decorate a row you can already see; this is the only route to a capability that is otherwise
+   invisible, and hiding it is how 313 organizations ended up with one workspace each.
+   ⚠️ AND IT IS NOT IN THE DROPDOWN. Inside the menu it read as a workspace you could switch to,
+   and in the single-workspace case — the common one — there is no menu to open at all. */
+.workspace-switcher-create {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; margin-top: 6px; padding: 5px 2px;
+  background: none; border: none;
+  color: var(--text-muted); font-size: 12px; text-align: left;
+  cursor: pointer; border-radius: 4px; transition: all var(--transition);
+}
+.workspace-switcher-create:hover { color: var(--accent); }
+.workspace-switcher-create svg { flex-shrink: 0; }
+/* ⚠️ THE MENU ANCHORS TO THE CONTAINER, SO THIS CONTROL MUST NOT ADD TO ITS HEIGHT.
+   .workspace-switcher-menu is absolutely positioned at top: calc(100% + 4px) against
+   .workspace-switcher. Adding an in-flow row after the menu grew that container by ~30px, so the
+   dropdown opened BELOW the "New workspace" line instead of directly under its own button — the
+   action wedged between the selector and the list it opens. Taking the control out of flow keeps
+   the anchor where the menu expects it, and the container reserves the space instead. */
+.workspace-switcher { padding-bottom: 28px; }
+.workspace-switcher-create { position: absolute; left: 0; bottom: 0; margin-top: 0; }
 /* Members icon - same shape as the pencil; navigates to #/workspace/:id/members. */
 .workspace-switcher-members {
   flex-shrink: 0; visibility: hidden;
@@ -300,10 +323,24 @@ h1, h2, h3, h4, h5, h6, .logo {
   50% { opacity: 0.4; }
 }
 
-.content {
+/* Wraps the (optional) banners strip and main content so they stack
+   vertically as a single flex column, independent from the fixed sidebar.
+   Without this wrapper, #banners and .content would be direct siblings in
+   the (row-direction) body flexbox, turning the banner into a narrow flex
+   item next to the content instead of a full-width strip above it, and
+   shifting the whole dashboard layout out of alignment with the sidebar. */
+.main-wrapper {
   margin-left: var(--sidebar-width);
   flex: 1;
+  display: flex;
+  flex-direction: column;
   height: 100vh;
+  min-width: 0;
+}
+
+.content {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 24px 32px;
 }
@@ -387,6 +424,71 @@ h1, h2, h3, h4, h5, h6, .logo {
   font-size: 12px;
 }
 
+.selection-group-menu {
+  position: relative;
+}
+
+.selection-bar-divider {
+  width: 1px;
+  height: 22px;
+  margin: 0 2px;
+  background: var(--border);
+}
+
+.selection-group-menu summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.selection-group-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.selection-group-menu-panel {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  min-width: 200px;
+  padding: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+}
+
+.selection-group-menu[open] .selection-group-menu-panel {
+  display: grid;
+}
+
+.selection-group-menu-panel button {
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.selection-group-menu-panel button:hover {
+  background: var(--bg-card-hover);
+}
+
+.selection-group-menu-divider {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border);
+}
+
+.selection-group-menu-panel .selection-group-menu-create {
+  color: var(--accent);
+}
+
 .btn-icon {
   padding: 6px;
   border-radius: var(--radius);
@@ -419,6 +521,23 @@ h1, h2, h3, h4, h5, h6, .logo {
   border-color: var(--accent);
   box-shadow: var(--shadow);
   transform: translateY(-2px);
+}
+
+/* #238: a rotated display shown as its viewer sees it. The stage is the panel's face; the frame is
+   its framebuffer, turned back by the mount (js/lib/device-frame.js sizes and rotates it from the
+   players' shared rule). The frame is centred on its offset parent, so a stage without
+   `position: relative` would centre it on the page — hence both halves live here together. */
+.display-stage {
+  position: relative;
+  overflow: hidden;
+}
+
+.display-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
 }
 
 .device-card-preview {
@@ -1429,7 +1548,23 @@ h1, h2, h3, h4, h5, h6, .logo {
   flex-shrink: 0;
 }
 
-.help-tip:hover::after {
+/* A help tip must be reachable without a mouse. :hover alone made every one of these
+   invisible on a tablet or phone — which is a large share of the people administering a
+   signage install — and unreachable by keyboard. Tapping toggles .is-open; focus shows it too. */
+/* The visible marker is 18px, which is fine to look at and far too small to hit with a thumb —
+   about half the ~44px touch guideline. Now that tapping a tip is how touch users read it at
+   all, extend the HIT AREA with a transparent inset overlay rather than inflating the circle,
+   so the target is comfortable without the marker dominating a heading. */
+.help-tip::before {
+  content: '';
+  position: absolute;
+  inset: -13px;
+  border-radius: 50%;
+}
+
+.help-tip:hover::after,
+.help-tip:focus-visible::after,
+.help-tip.is-open::after {
   content: attr(data-tip);
   position: absolute;
   bottom: 100%;
@@ -1494,7 +1629,8 @@ h1, h2, h3, h4, h5, h6, .logo {
   }
   .sidebar-backdrop.open { display: block; }
   .nav-link { min-height: 44px; padding: 10px 14px; }
-  .content { margin-left: 0; padding: 16px; padding-top: 68px; }
+  .main-wrapper { margin-left: 0; }
+  .content { padding: 16px; padding-top: 68px; }
   .page-header { flex-direction: column; gap: 12px; align-items: flex-start; }
   .device-grid { grid-template-columns: 1fr; }
   .content-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
@@ -1564,4 +1700,71 @@ h1, h2, h3, h4, h5, h6, .logo {
 @media (max-width: 480px) {
   .content-grid { grid-template-columns: 1fr; }
   .assign-content-grid { grid-template-columns: 1fr 1fr; }
+}
+
+
+/* ===================== TRIGGERS DIALOG =====================
+ *
+ * ⚠️ This form used `.modal-backdrop`, which is defined nowhere — so it rendered unstyled and
+ * un-positioned at the end of the page. It now uses the same .modal-overlay/.modal/.modal-header/
+ * .modal-body/.modal-footer skeleton as every other dialog; what follows is only the extra it
+ * genuinely needs, which is a wider shell and the two-column assignment grid.
+ */
+
+/* Wider than the 440px default: this form has paired numeric fields and a two-column assignment
+   grid, and at 440px both wrap into a single column of forty rows. */
+.modal.tg-modal { width: 640px; }
+
+.tg-section { padding-bottom: 4px; margin-bottom: 18px; border-bottom: 1px solid var(--border); }
+.tg-section:last-child { border-bottom: 0; margin-bottom: 0; }
+
+.tg-legend {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 0 0 10px;
+}
+
+.tg-blurb { font-size: 12px; color: var(--text-secondary); margin: -4px 0 12px; }
+.tg-hint { font-size: 11.5px; color: var(--text-muted); margin-top: 5px; line-height: 1.45; }
+
+/* Paired fields (max duration + lease) sit side by side; they are read together. */
+.tg-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+.tg-sources { display: flex; gap: 18px; margin-top: 2px; }
+
+.tg-check { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; cursor: pointer; }
+.tg-check input { margin: 0; }
+
+/* Enabled belongs beside Save, not lost in the middle of the form: it is the one control that
+   decides whether any of the rest happens. margin-right:auto pushes the buttons right. */
+.tg-enabled { margin-right: auto; color: var(--text-secondary); }
+
+.tg-empty {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+
+.tg-col { font-size: 12px; font-weight: 600; color: var(--text-secondary); margin: 0 0 8px; }
+
+.assign-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+
+/* The assignment lists can be long — a hundred screens is normal — so each column scrolls rather
+   than pushing Save out of reach. */
+.assign-grid > div { max-height: 210px; overflow-y: auto; padding-right: 4px; }
+.assign-grid label {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; padding: 4px 0; cursor: pointer;
+}
+.assign-grid label input { margin: 0; flex-shrink: 0; }
+
+@media (max-width: 700px) {
+  .tg-row, .assign-grid { grid-template-columns: 1fr; }
 }

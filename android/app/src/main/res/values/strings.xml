@@ -25,6 +25,8 @@
     <string name="hw_enroll_constraints">Or scan the provisioning QR from the dashboard after a factory reset (tap the setup-wizard Welcome screen 6×). Device owner is optional — the app works fully without it.</string>
     <string name="hw_recheck">Re-check</string>
     <string name="settings_info_device">Device</string>
+    <string name="settings_exit_kiosk">Exit kiosk mode</string>
+    <string name="settings_exit_kiosk_done">Kiosk mode off. It stays off until re-enabled from the dashboard.</string>
     <string name="settings_exit">Exit app</string>
     <string name="settings_save">Save</string>
     <string name="settings_exit_title">Exit ScreenTinker?</string>
@@ -39,4 +41,8 @@
     <string name="settings_perm_notifications">Notifications</string>
     <string name="settings_perm_hint">Tap \"Open\" to manage permissions in system settings</string>
     <string name="settings_perm_open">Open settings</string>
+    <string name="settings_perm_done">Done</string>
+    <string name="settings_perm_manage">Manage permissions</string>
+    <string name="device_blocked_status">This screen has been blocked in the dashboard</string>
+    <string name="device_unpaired_status">This screen was unpaired — waiting to be re-paired</string>
 </resources>

@@ -1,9 +1,23 @@
 import { api } from '../api.js';
 import { on, off, requestScreenshot, startRemote, stopRemote, sendTouch, sendSwipe, sendKey, sendCommand } from '../socket.js';
 import { showToast } from '../components/toast.js';
-import { esc, livenessBadge, hydrateAuthImages } from '../utils.js';
+import { esc, livenessBadge, hydrateAuthImages, screenshotUrl } from '../utils.js';
 import { t, tn } from '../i18n.js';
 import { showDeviceOwnerQRModal } from '../components/device-owner-qr-modal.js';
+import { frameDeviceOutput, displayAspectRatio } from '../lib/device-frame.js';
+import * as gettingStarted from '../components/getting-started.js';
+
+// The player distinguishes three cases for the Wi-Fi name, because "--" was hiding a real
+// answer: Android 8.1+ refuses to reveal the SSID to an app without location permission, and a
+// customer reasonably read the blank as a bug in the player. "permission" means we are not
+// allowed to know; empty means there is genuinely no Wi-Fi (an Ethernet panel).
+// #238: turn the Now Playing screenshot the way the wall mount turns the panel. The placeholder
+// ("no screenshot yet") is deliberately left alone — it is dashboard chrome, not device output.
+function frameNowPlaying() {
+  const stage = document.getElementById('screenshotStage');
+  const img = document.getElementById('currentScreenshot');
+  if (stage && img && img.tagName === 'IMG') frameDeviceOutput(stage, img, currentDevice?.orientation);
+}
 
 let currentDevice = null;
 let statusHandler = null;
@@ -14,6 +28,81 @@ let shellHandler = null;
 let diagPollTimer = null; // polls a diag-smoothness widget's reported frame stats while the page is open
 let screenshotInterval = null;
 let remoteActive = false;
+// Mirrors the Debug-logging checkbox so cleanup() can switch the device's stream back off.
+// Without this, leaving the screen left the panel streaming into nothing: the device kept
+// emitting, the dashboard kept relaying, and nobody was listening. The player carries its own
+// auto-off as the backstop for the case this can't cover -- a tab that is killed, not closed.
+let debugStreamOn = false;
+let debugFrozen = false;
+let debugHeld = [];              // lines that arrived while frozen, replayed on resume
+const DEBUG_PANEL_MAX = 500;     // panel rows AND the held-while-frozen cap
+
+// Every player sends a level and the panel used to render all four identically, so the one line
+// that explains the fault sat in a wall of grey. Errors and warnings are why the operator opened it.
+const DEBUG_LEVEL_COLOR = { e: '#f87171', w: '#fbbf24', d: '#64748b' };
+
+function debugLineText(d) {
+  return `${new Date(d.ts || Date.now()).toLocaleTimeString()} [${d.tag || ''}] ${d.message || ''}`;
+}
+
+function appendDebugLine(d) {
+  const panel = document.getElementById('debugLogPanel');
+  if (!panel) return;
+  const line = document.createElement('div');
+  line.textContent = debugLineText(d);                       // textContent — no HTML injection
+  const tone = DEBUG_LEVEL_COLOR[(d.level || '').toLowerCase()];
+  if (tone) line.style.color = tone;
+  panel.appendChild(line);
+  while (panel.childElementCount > DEBUG_PANEL_MAX) panel.removeChild(panel.firstChild);
+  panel.scrollTop = panel.scrollHeight;
+}
+
+function updateDebugTools() {
+  const btn = document.getElementById('debugFreezeBtn');
+  const status = document.getElementById('debugLogStatus');
+  if (btn) btn.textContent = debugFrozen ? t('device.debug.resume') : t('device.debug.freeze');
+  if (status) {
+    // Say how many are waiting, so freezing never feels like the device went quiet.
+    status.textContent = debugFrozen
+      ? (debugHeld.length >= DEBUG_PANEL_MAX
+          ? t('device.debug.held_max', { n: debugHeld.length })
+          : t('device.debug.held', { n: debugHeld.length }))
+      : '';
+  }
+}
+
+function setDebugFrozen(frozen) {
+  debugFrozen = frozen;
+  if (!frozen) {
+    const held = debugHeld;
+    debugHeld = [];
+    for (const d of held) appendDebugLine(d);   // resume shows what you missed, in order
+  }
+  updateDebugTools();
+}
+
+/*
+ * Clipboard with a fallback, because a self-hosted dashboard on plain http is NOT a secure context
+ * and `navigator.clipboard` is simply absent there — the copy buttons elsewhere in this app quietly
+ * do nothing in that case. A debug log is precisely what a self-hoster wants to paste into an issue.
+ */
+async function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+  } catch (e) { /* fall through to the legacy path */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:-1000px;left:-1000px;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, ta.value.length);
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) { return false; }
+}
 
 // Belt for the orphaned-stream fix: if the tab is hidden/closed/backgrounded while a Remote session
 // is live, stop it (the server also auto-stops on socket drop, but bfcache keeps the socket alive).
@@ -73,6 +162,49 @@ function renderDeviceClock(device) {
   return `${tz}${local ? `<div style="font-size:11px;color:var(--text-muted)">${t('device.clock.reported', { time: local })}</div>` : ''}${warn}`;
 }
 
+// A BrightSign runs the same web player, so client_type is 'player' and it would otherwise read as
+// "Web Player" — indistinguishable from a browser tab on someone's desk. The player reports
+// platform 'brightsign' (autorun.brs puts ?platform=brightsign on the URL); the user-agent check
+// covers panels paired before that existed, which registered as "Chrome 120" with a BrightSign UA.
+function isBrightSignDevice(device) {
+  if (!device) return false;
+  // platform only: `devices` has no user_agent column, so a fallback on it could never fire.
+  return String(device.platform || '').toLowerCase().includes('brightsign');
+}
+
+// Mirrors platformFamily() in server/lib/player-capabilities.js — SAME FOUR SIGNALS, SAME ORDER,
+// so the UI and the server never disagree about what a device is.
+//
+// The precedence is the whole point and is easy to get wrong. An earlier version of this helper
+// kept only the last test, and a Tizen TV registers `android_version: 'Tizen 6.5'` (see
+// tizen/js/app.js) — non-empty, not "Web/..." — so every Samsung panel in the fleet classified as
+// Android. It was invisible only because Tizen happens to declare remote.screenshot today; the
+// moment that changes, a MediaProjection button appears on a TV that has no such API.
+//
+// Gates the MediaProjection capture bootstrap below, and that gate is deliberately Android-and-
+// nothing-else — NOT "Android that cannot already capture".
+//
+// The tempting extra condition is to hide it once a panel declares remote.screenshot. Two reasons
+// not to. First, the dashboard cannot tell "this device declared it" from "the server filled in a
+// baseline": /api/devices/:id ships capabilitiesFor(), which resolves both into one array (see
+// server/routes/devices.js), and the android baseline CONTAINS remote.screenshot — so that
+// condition hides the button from every one of the ~440 undeclared panels in the field, which is
+// exactly backwards. Second, even where capture already works it is the accessibility path;
+// MediaProjection is the better one (WebSocketService tries it FIRST), so offering the upgrade to
+// a panel that has the weaker path is a feature, not redundancy.
+function isAndroidDevice(device) {
+  if (!device) return false;
+  const platform = String(device.platform || '').toLowerCase();
+  if (platform.includes('brightsign')) return false;
+  if (platform.includes('tizen')) return false;
+  // Second, independent signal for a Tizen TV: the .wgt player sends client_type 'wgt'. `platform`
+  // is the primary key, but it lives in a column an older client's register could overwrite.
+  if (device.client_type === 'wgt') return false;
+  if (device.client_type === 'apk') return true;
+  const av = String(device.android_version || '');
+  return av !== '' && !av.startsWith('Web/');
+}
+
 export function render(container, deviceId) {
   container.innerHTML = `
     <div class="device-detail">
@@ -124,6 +256,10 @@ export function render(container, deviceId) {
         img.style.cssText = 'width:100%;height:100%;object-fit:contain';
         screenshotEl.replaceWith(img);
       }
+      // #238: a screenshot is the RAW framebuffer, so a portrait panel's arrives sideways — the
+      // player rotated the content into it and only the wall mount turns it back. Re-frame on every
+      // arrival, not just at render: the branch above swaps the element out from under us.
+      frameNowPlaying();
     }
     // Update remote canvas
     const canvas = document.getElementById('remoteCanvas');
@@ -151,14 +287,16 @@ export function render(container, deviceId) {
   // checkbox is on). Appended via textContent — no HTML injection.
   logHandler = (data) => {
     if (data.device_id !== deviceId) return;
-    const panel = document.getElementById('debugLogPanel');
-    if (!panel) return;
-    const line = document.createElement('div');
-    const time = new Date(data.ts || Date.now()).toLocaleTimeString();
-    line.textContent = `${time} [${data.tag || ''}] ${data.message || ''}`;
-    panel.appendChild(line);
-    while (panel.childElementCount > 500) panel.removeChild(panel.firstChild);
-    panel.scrollTop = panel.scrollHeight;
+    // Frozen: HOLD the line rather than drop it. A log you froze to read something is the exact
+    // moment the lines that explain it are still arriving — pausing the stream would throw away
+    // the part you were about to want.
+    if (debugFrozen) {
+      debugHeld.push(data);
+      if (debugHeld.length > DEBUG_PANEL_MAX) debugHeld.shift();
+      updateDebugTools();
+      return;
+    }
+    appendDebugLine(data);
   };
 
   on('device-status', statusHandler);
@@ -172,26 +310,43 @@ async function loadDevice(deviceId, activeTab = null) {
   try {
     const device = await api.getDevice(deviceId);
     currentDevice = device;
+
+    /*
+     * Does this display support `cap`? Drives which controls render at all.
+     *
+     * Every control used to be offered to every display: a browser tab was shown "Reboot device",
+     * a Tizen TV was shown screen power. They did nothing, silently, and read as bugs. Hidden
+     * rather than disabled — a greyed-out button on a panel that will NEVER gain the capability is
+     * a permanent question ("what do I have to do to enable this?") with no answer. The capability
+     * list is shown in the Info tab so a missing control is explainable.
+     *
+     * The server resolves the baseline for the ~440 displays that declare nothing, so this sees a
+     * populated list either way and never has to know the difference.
+     */
+    const caps = Array.isArray(device.capabilities) ? device.capabilities : null;
+    const can = (cap) => (caps ? caps.includes(cap) : true);   // no list at all => pre-capability server, show everything
+
     const latestTelemetry = device.telemetry?.[0] || {};
     const diagWidget = (device.assignments || []).find(a => a && a.widget_type === 'diag-smoothness');
 
     contentEl.innerHTML = `
       <div class="device-header">
         <div class="device-header-left">
-          <h1 id="deviceName">${device.name}</h1>
+          <h1 id="deviceName">${esc(device.name)}</h1>
           ${(() => { const b = livenessBadge(device); return `<span class="device-status-badge ${b.state}"${b.title ? ` title="${esc(b.title)}"` : ''}>${esc(b.label)}</span>`; })()}
           ${device.owner_name || device.owner_email ? `<span style="font-size:12px;color:var(--text-muted)">${t('device.owner_label', { owner: device.owner_name || device.owner_email })}</span>` : ''}
         </div>
         <div style="display:flex;gap:8px">
           <button class="btn btn-secondary btn-sm" id="devicePreviewBtn">${t('device.preview_btn')}</button>
           <button class="btn btn-secondary btn-sm" id="renameBtn">${t('device.rename')}</button>
+          ${can('remote.screenshot') ? `
           <button class="btn btn-secondary btn-sm" id="screenshotBtn">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
               <polyline points="21 15 16 10 5 21"/>
             </svg>
             ${t('device.screenshot_btn')}
-          </button>
+          </button>` : ''}
           ${device.android_version && !device.android_version.startsWith('Web/') ? `
           <button class="btn btn-secondary btn-sm" id="deviceOwnerBtn" title="${t('device.owner_provision.tip')}">${t('device.owner_provision.btn')}</button>` : ''}
           <button class="btn btn-secondary btn-sm" id="blockDeviceBtn">${device.blocked ? 'Unblock' : 'Block'}</button>
@@ -199,36 +354,53 @@ async function loadDevice(deviceId, activeTab = null) {
         </div>
       </div>
 
-      ${device.tier === 2 ? `
+      ${/* tier===2 is kept alongside the capability: it is already an accurate RUNTIME signal from
+            the panel, and a device-owner display that has not yet shipped a capability declaration
+            would otherwise lose these buttons the day this deploys. */
+        (device.tier === 2 || can('system.device_owner')) ? `
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:8px 0 4px" title="${t('device.tier2.tip')}">
         <span style="font-size:12px;color:var(--text-muted)">${t('device.tier2.label')}</span>
         <button class="btn btn-secondary btn-sm" id="t2Reboot">${t('device.tier2.reboot')}</button>
         <button class="btn btn-secondary btn-sm" id="t2Lock">${t('device.tier2.lock')}</button>
+        ${(device.tier === 2 || can('system.kiosk')) ? `
         <button class="btn btn-secondary btn-sm" id="t2KioskOn">${t('device.tier2.kiosk_on')}</button>
-        <button class="btn btn-secondary btn-sm" id="t2KioskOff">${t('device.tier2.kiosk_off')}</button>
+        <button class="btn btn-secondary btn-sm" id="t2KioskOff">${t('device.tier2.kiosk_off')}</button>` : ''}
       </div>` : ''}
+
+      <!-- Step 4 sends you to this page to assign a playlist. Losing the checklist on arrival is
+           the same dead end the Content, Playlists and playlist-detail pages had. -->
+      <div id="gettingStarted"></div>
 
       <div class="tabs">
         <div class="tab active" data-tab="nowplaying">${t('device.tab.now_playing')} <span class="help-tip" data-tip="${t('device.tab.now_playing_tip')}">?</span></div>
         <div class="tab" data-tab="playlist">${t('device.tab.playlist')} <span class="help-tip" data-tip="${t('device.tab.playlist_tip')}">?</span></div>
         <div class="tab" data-tab="info">${t('device.tab.info')} <span class="help-tip" data-tip="${t('device.tab.info_tip')}">?</span></div>
-        <div class="tab" data-tab="remote">${t('device.tab.remote')} <span class="help-tip" data-tip="${t('device.tab.remote_tip')}">?</span></div>
-        ${(device.client_type === 'apk' || device.android_version) ? `<div class="tab" data-tab="controls">${t('device.tab.controls')} <span class="help-tip" data-tip="${t('device.tab.controls_tip')}">?</span></div>` : ''}
+        ${(can('remote.stream') || can('remote.input') || can('remote.screenshot')) ? `<div class="tab" data-tab="remote">${t('device.tab.remote')} <span class="help-tip" data-tip="${t('device.tab.remote_tip')}">?</span></div>` : ''}
+        ${(can('audio.volume') || can('display.brightness') || can('system.brightness') || can('system.screen_timeout')) ? `<div class="tab" data-tab="controls">${t('device.tab.controls')} <span class="help-tip" data-tip="${t('device.tab.controls_tip')}">?</span></div>` : ''}
         ${device.tier === 2 ? `<div class="tab" data-tab="terminal">${t('device.tab.terminal')} <span class="help-tip" data-tip="${t('device.tab.terminal_tip')}">?</span></div>` : ''}
+        <!--
+          #313 — only for a display that actually HAS an enrolment key, i.e. one created for a
+          player that cannot stay paired. Every other display keeps its own credentials and would
+          gain nothing from this tab but a durable secret it never needed.
+        -->
+        ${device.enrol_key ? `<div class="tab" data-tab="webplayer">${t('device.tab.webplayer')} <span class="help-tip" data-tip="${t('device.tab.webplayer_tip')}">?</span></div>` : ''}
       </div>
 
       <!-- Now Playing Tab -->
       <div class="tab-content active" id="tab-nowplaying">
-        <div class="screenshot-container">
+        <div class="screenshot-container" id="screenshotStage">
           ${device.screenshot
-            ? `<img id="currentScreenshot" src="/api/devices/${device.id}/screenshot?t=${Date.now()}&token=${localStorage.getItem('token')}" alt="Current screen">`
+            ? `<img id="currentScreenshot" src="${screenshotUrl(device.id, Date.now())}" alt="Current screen">`
             : `<div class="no-screenshot" id="currentScreenshot">
                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                   <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
                   <line x1="8" y1="21" x2="16" y2="21"/>
                   <line x1="12" y1="17" x2="12" y2="21"/>
                 </svg>
-                <span>${t('device.no_screenshot')}</span>
+                <!-- The default copy tells the operator to click a button that is only rendered
+                     for a panel that can capture. On one that cannot, pointing at a control that
+                     is not on the page reads as a broken dashboard. -->
+                <span>${can('remote.screenshot') ? t('device.no_screenshot') : t('device.no_screenshot_unsupported')}</span>
               </div>`
           }
         </div>
@@ -274,6 +446,7 @@ async function loadDevice(deviceId, activeTab = null) {
             <select class="input" id="playlistPicker" style="font-size:12px;padding:4px 8px;width:200px">
               <option value="">${t('device.playlist.no_playlist')}</option>
             </select>
+            ${playlistSourceBadge(device)}
           </div>
           <div style="display:flex;gap:6px">
             <button class="btn btn-secondary btn-sm" id="copyPlaylistBtn">${t('device.playlist.copy_to_btn')}</button>
@@ -293,6 +466,63 @@ async function loadDevice(deviceId, activeTab = null) {
       <!-- Info Tab -->
       <div class="tab-content" id="tab-info">
         ${diagWidget ? renderDiagPanel(diagWidget) : ''}
+
+        <!-- The actions an operator opens this page to take. They used to sit below the info
+             grid, the reboot schedule and the debug log panel, which on a phone meant scrolling
+             past everything to reach the one button you came for. Kept as a single wrapping row
+             so a narrow screen reflows rather than clipping, and each button still renders only
+             where the display can honour it. -->
+        <div style="margin:20px 0;display:flex;gap:8px;flex-wrap:wrap">
+          ${can('system.reboot') ? `
+          <button class="btn btn-secondary btn-sm" id="rebootBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+            </svg>
+            ${t('device.ctl.reboot_device')}
+          </button>` : ''}
+          ${can('display.power') ? `
+          <button class="btn btn-secondary btn-sm" id="screenOffBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+            </svg>
+            ${t('device.ctl.screen_off')}
+          </button>` : ''}
+          ${can('display.power') ? `
+          <button class="btn btn-secondary btn-sm" id="screenOnBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+            </svg>
+            ${t('device.ctl.screen_on')}
+          </button>` : ''}
+          ${can('system.restart_player') ? `
+          <button class="btn btn-secondary btn-sm" id="launchAppBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+            ${t('device.ctl.launch_player')}
+          </button>` : ''}
+          ${can('system.self_update') ? `
+          <button class="btn btn-secondary btn-sm" id="forceUpdateBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            ${t('device.ctl.force_update')}
+          </button>
+          <button class="btn btn-secondary btn-sm" id="clearUpdateCacheBtn" title="${t('device.ctl.clear_update_cache_tip')}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+            </svg>
+            ${t('device.ctl.clear_update_cache')}
+          </button>` : ''}
+          ${can('system.reboot') ? `
+          <button class="btn btn-danger btn-sm" id="shutdownBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/>
+            </svg>
+            ${t('device.ctl.shutdown')}
+          </button>` : ''}
+        </div>
+
         <div class="info-grid">
           <div class="info-card">
             <div class="info-card-label">${t('device.info.status')}</div>
@@ -302,6 +532,22 @@ async function loadDevice(deviceId, activeTab = null) {
             <div class="info-card-label">${t('device.info.ip_address')}</div>
             <div class="info-card-value small">${device.ip_address || '--'}</div>
           </div>
+          <div class="info-card">
+            <!-- Two different addresses, and conflating them confused a customer into reading their
+                 ISP's address as the screen's. Above is where the connection comes FROM (public);
+                 this is what the screen calls itself on its own network. -->
+            <div class="info-card-label">${t('device.info.local_ip')}</div>
+            <div class="info-card-value small" id="telLocalIp">${device.local_ip || '--'}</div>
+          </div>
+          ${device.local_ip6 ? `
+          <div class="info-card">
+            <!-- Rendered only when the panel actually has one. A v6 address is long, and showing an
+                 empty row for the overwhelmingly v4 fleet would cost every operator screen space to
+                 tell them nothing. A dual-stack panel shows both cards; a v6-only panel used to
+                 show a dash here and nothing else, because the player only ever collected v4. -->
+            <div class="info-card-label">${t('device.info.local_ip6')}</div>
+            <div class="info-card-value small" id="telLocalIp6">${device.local_ip6}</div>
+          </div>` : ''}
           ${device.android_version && !device.android_version.startsWith('Web/') ? `
           <div class="info-card">
             <div class="info-card-label">${t('device.info.battery')}</div>
@@ -324,19 +570,105 @@ async function loadDevice(deviceId, activeTab = null) {
           ` : `
           <div class="info-card">
             <div class="info-card-label">${t('device.info.player_type')}</div>
-            <div class="info-card-value small">${t('device.info.web_player')}</div>
+            <div class="info-card-value small">${isBrightSignDevice(device) ? t('device.info.brightsign_player') : t('device.info.web_player')}</div>
           </div>
+          ${device.hardware_model ? `
+          <div class="info-card">
+            <div class="info-card-label">${t('device.info.hardware_model')}</div>
+            <div class="info-card-value small">${esc(device.hardware_model)}${device.output_index > 1 ? ` <span style="color:var(--text-muted)">${t('device.info.output_n', { n: device.output_index })}</span>` : ''}</div>
+          </div>` : ''}
+          ${device.hardware_os_version ? `
+          <div class="info-card">
+            <div class="info-card-label">${t('device.info.os_version')}</div>
+            <div class="info-card-value small">${esc(device.hardware_os_version)}</div>
+          </div>` : ''}
+          ${device.hardware_serial ? `
+          <div class="info-card">
+            <div class="info-card-label">${t('device.info.serial')}</div>
+            <div class="info-card-value small">${esc(device.hardware_serial)}</div>
+          </div>` : ''}
+          ${latestTelemetry.storage_total_mb ? `
+          <div class="info-card">
+            <!-- This used to be labelled "player storage" because the number WAS the widget's
+                 cache quota rather than the disk — a real XT245 with a 119 GB NVMe reported
+                 "1026 MB", and the label was the only thing stopping that being read as the disk
+                 size. The bridge now reads the actual filesystem (statfs over the mounts under
+                 /storage, largest wins), so it means the same thing as Android's figure and is
+                 labelled the same. ⚠️ The bridge is served per page load, so a player that has not
+                 re-fetched it yet still reports the quota — see the CDN caching note in
+                 docs/player-parity.md before trusting a suspiciously round ~1 GB here. -->
+            <div class="info-card-label">${t('device.info.storage')}</div>
+            <div class="info-card-value small" id="telStorage">${latestTelemetry.storage_free_mb != null ? t('device.info.size_free', { size: formatBytes(latestTelemetry.storage_free_mb) }) : '--'}</div>
+            <div class="progress-bar">
+              <div class="progress-bar-fill ${((latestTelemetry.storage_total_mb - latestTelemetry.storage_free_mb) / latestTelemetry.storage_total_mb) < 0.8 ? 'success' : 'warning'}"
+                   style="width:${((latestTelemetry.storage_total_mb - latestTelemetry.storage_free_mb) / latestTelemetry.storage_total_mb * 100)}%"></div>
+            </div>
+          </div>` : ''}
           `}
+          <!-- The physical panel, from its EDID, and the mode the output is negotiated to. Shown
+               only when the player reports them, like every other card here: a family that cannot
+               read its own output must not grow an empty row. On a dual-output player each device
+               row is one output, so this is THAT output's screen — not the box's first. -->
+          <!-- ⚠️ BrightSign-only, like the two cards below. It renders for nobody on a fleet
+               with no BrightSign players, which is not the same as being unused. -->
+          ${latestTelemetry.temperature_c != null ? `
+          <div class="info-card">
+            <div class="info-card-label">${t('device.info.temperature')}</div>
+            <div class="info-card-value small" id="telTemp">${latestTelemetry.temperature_c}&deg;C</div>
+          </div>` : ''}
+          ${latestTelemetry.attached_display ? `
+          <div class="info-card">
+            <div class="info-card-label">${t('device.info.attached_display')}</div>
+            <div class="info-card-value small" id="telDisplay">${esc(latestTelemetry.attached_display)}</div>
+          </div>` : ''}
+          ${latestTelemetry.video_mode ? `
+          <div class="info-card">
+            <div class="info-card-label">${t('device.info.video_mode')}</div>
+            <div class="info-card-value small" id="telVideoMode">${esc(latestTelemetry.video_mode)}</div>
+          </div>` : ''}
+          <!-- The panel's own EDID, parsed server-side from the raw block the player reported.
+               Answers the questions the player's DWS answers and the dashboard previously could
+               not: which panel is this, how old is it, what does it actually want to be driven at.
+               Absent entirely on a device that never reported one, rather than an empty card. -->
+          ${device.edid ? `
+          <div class="info-card">
+            <div class="info-card-label">${t('device.info.edid')}</div>
+            <div class="info-card-value small">${esc(device.edid.manufacturer || '')} ${esc(device.edid.monitorName || device.edid.productHex || '')}</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px;line-height:1.5">
+              ${device.edid.preferredMode ? `${t('device.info.edid_preferred')}: <strong>${esc(device.edid.preferredMode)}</strong><br>` : ''}
+              ${device.edid.widthCm ? `${esc(device.edid.widthCm)}&times;${esc(device.edid.heightCm)} cm &middot; ` : ''}${device.edid.digital ? 'digital' : 'analog'} &middot; EDID ${esc(device.edid.edidVersion)}<br>
+              ${device.edid.yearOfManufacture ? `${t('device.info.edid_made')}: ${esc(device.edid.yearOfManufacture)}w${String(device.edid.weekOfManufacture).padStart(2, '0')}<br>` : ''}
+              ${device.edid.serialNumber ? `${t('device.info.edid_serial')}: ${esc(device.edid.serialNumber)} &middot; ` : ''}${t('device.info.edid_product')}: ${esc(device.edid.productHex)}
+              ${device.edid.cea && (device.edid.cea.bt2020Rgb || device.edid.cea.bt2020Ycc) ? `<br>BT.2020${device.edid.cea.hdrSt2084 ? ' &middot; HDR10' : ''}` : ''}
+              ${device.edid.checksumValid === false ? `<br><span style="color:var(--warning,#f59e0b)">${t('device.info.edid_checksum_bad')}</span>` : ''}
+            </div>
+          </div>` : ''}
           ${device.android_version && !device.android_version.startsWith('Web/') ? `
           <div class="info-card">
             <div class="info-card-label">${t('device.info.wifi')}</div>
-            <div class="info-card-value small" id="telWifi">${latestTelemetry.wifi_ssid || '--'}</div>
-            <div style="font-size:11px;color:var(--text-muted);margin-top:2px" id="telRssi">${latestTelemetry.wifi_rssi ? latestTelemetry.wifi_rssi + ' dBm' : ''}</div>
+            <!-- ⚠️ The network NAME is deliberately gone (Phase −1). An SSID is geolocatable
+                 against public wardriving databases, so it could place a customer's premises
+                 on a map — and 94% of the stored values were never SSIDs anyway. Signal
+                 strength stays: it is what an installer actually acts on. -->
+            <div class="info-card-value small" id="telRssi">${latestTelemetry.wifi_rssi != null ? latestTelemetry.wifi_rssi + ' dBm' : '--'}</div>
           </div>
           ` : ''}
           <div class="info-card">
             <div class="info-card-label">${t('device.info.uptime')}</div>
             <div class="info-card-value small" id="telUptime">${formatUptime(latestTelemetry.uptime_seconds)}</div>
+          </div>
+          <!-- Player version, on EVERY platform. This card used to sit inside the Android-only
+               block below, so a BrightSign or Tizen panel never showed a version at all: they
+               register android_version as "Web/<ua>", which fails that test. On a BrightSign
+               app_version is the ON-DEVICE host package (autorun.brs, what OTA replaces) and
+               client_version is the page we serve, which is always current — so where the two
+               differ, both are worth showing: the pair is what tells you whether a panel is
+               running a stale host against a fresh page. -->
+          <div class="info-card">
+            <div class="info-card-label">${t('device.info.app_version')}</div>
+            <div class="info-card-value small">${esc(device.app_version || '--')}</div>
+            ${device.client_version && device.client_version !== device.app_version ? `
+            <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${esc(device.client_version)}</div>` : ''}
           </div>
           ${device.android_version && !device.android_version.startsWith('Web/') ? `
           <div class="info-card">
@@ -344,13 +676,13 @@ async function loadDevice(deviceId, activeTab = null) {
             <div class="info-card-value small">${device.android_version}</div>
           </div>
           <div class="info-card">
-            <div class="info-card-label">${t('device.info.app_version')}</div>
-            <div class="info-card-value small">${device.app_version || '--'}</div>
-          </div>
-          <div class="info-card">
             <div class="info-card-label">${t('device.info.settings_pin')}</div>
             <div class="info-card-value small" style="font-family:monospace;letter-spacing:1px">${device.settings_pin || '--'}</div>
             <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${t('device.info.settings_pin_hint')}</div>
+            <div style="display:flex;gap:6px;margin-top:6px">
+              <button class="btn btn-secondary btn-sm" id="rotatePinBtn">${t('device.pin.rotate')}</button>
+              <button class="btn btn-secondary btn-sm" id="setPinBtn">${t('device.pin.set')}</button>
+            </div>
           </div>
           ` : ''}
           <div class="info-card">
@@ -368,17 +700,43 @@ async function loadDevice(deviceId, activeTab = null) {
             <div class="info-card-label">${t('device.clock.label')}</div>
             <div class="info-card-value small">${renderDeviceClock(device)}</div>
           </div>
-          ${device.android_version && !device.android_version.startsWith('Web/') ? `
+          <!-- Shown for Android as before, and now for ANY player that actually reports the value.
+               These were platform-gated when Android was the only family that could measure them;
+               a BrightSign widget runs with nodejs_enabled and the bridge reads os.totalmem/freemem
+               and the load average, so the numbers exist and were being thrown away by a gate that
+               asked what the device IS instead of what it SENT. Keeping the Android arm means a
+               panel that reports nothing still shows "--" there rather than losing its cards. -->
+          ${(device.android_version && !device.android_version.startsWith('Web/')) || latestTelemetry.ram_free_mb != null ? `
           <div class="info-card">
             <div class="info-card-label">${t('device.info.ram')}</div>
             <div class="info-card-value small" id="telRam">${latestTelemetry.ram_free_mb ? t('device.info.size_free', { size: formatBytes(latestTelemetry.ram_free_mb) }) : '--'}</div>
-          </div>
+          </div>` : ''}
+          ${(device.android_version && !device.android_version.startsWith('Web/')) || latestTelemetry.cpu_usage != null ? `
           <div class="info-card">
             <div class="info-card-label">${t('device.info.cpu_usage')}</div>
             <div class="info-card-value small" id="telCpu">${latestTelemetry.cpu_usage != null ? latestTelemetry.cpu_usage.toFixed(1) + '%' : '--'}</div>
           </div>
           ` : ''}
         </div>
+
+        <!-- What this display can do.
+             Controls are now hidden when the player cannot honour them, which on its own looks
+             like the dashboard has lost features. This is the answer to "where did the reboot
+             button go" — it names the exact set the panel reported, and says plainly when the set
+             is a per-platform assumption rather than something the player actually declared. -->
+        <div style="margin-top:20px">
+          <h4 style="font-size:13px;margin-bottom:8px">${t('device.caps.title')}</h4>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">
+            ${caps ? t('device.caps.declared') : t('device.caps.assumed')}
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">
+            ${(device.capabilities || []).map(c => `<span style="font-family:monospace;font-size:11px;background:var(--bg-input);border:1px solid var(--border);border-radius:4px;padding:2px 6px">${esc(c)}</span>`).join('')
+              || `<span style="font-size:12px;color:var(--danger)">${t('device.caps.none')}</span>`}
+          </div>
+        </div>
+
+        ${renderTriggerConfig(device)}
+        ${renderTriggerDiagnostics(device)}
 
         <!-- Uptime Timeline (24h) -->
         <div style="margin-top:20px">
@@ -413,6 +771,14 @@ async function loadDevice(deviceId, activeTab = null) {
                 <option value="portrait-flipped" ${'portrait-flipped' === device.orientation ? 'selected' : ''}>${t('device.form.orientation.portrait_flipped')}</option>
               </select>
             </div>
+              <div class="form-group">
+                <label>${t('device.form.background_label')}</label>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <input type="color" id="devBackground" value="${device.background_color || '#000000'}" style="width:60px;height:32px;border:none;cursor:pointer">
+                  <button type="button" class="btn btn-secondary btn-sm" id="devBackgroundReset">${t('device.form.background_reset')}</button>
+                </div>
+                <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('device.form.background_hint')}</div>
+              </div>
             <div class="form-group" style="flex:1;margin:0">
               <label>${t('device.form.default_content_label')}</label>
               <select id="deviceDefaultContent" class="input" style="background:var(--bg-input)">
@@ -429,6 +795,10 @@ async function loadDevice(deviceId, activeTab = null) {
               <input type="checkbox" id="otaToggle" ${device.ota_enabled === 0 ? '' : 'checked'}> ${t('device.ota.toggle')}
             </label>
             <div style="font-size:11px;color:var(--text-muted);margin:4px 0 0 24px">${t('device.ota.hint')}</div>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;margin-top:8px">
+                <input type="checkbox" id="otaBetaToggle" ${device.ota_beta === 1 ? 'checked' : ''}> ${t('device.ota.beta')}
+              </label>
+              <div style="font-size:11px;color:var(--text-muted);margin:4px 0 0 24px">${t('device.ota.beta_hint')}</div>
           </div>
           <div class="form-group" style="max-width:280px">
             <label>${t('device.reboot_schedule.label')}</label>
@@ -444,47 +814,19 @@ async function loadDevice(deviceId, activeTab = null) {
             <input type="checkbox" id="debugLogToggle"> ${t('device.debug.toggle')}
           </label>
           <div style="font-size:11px;color:var(--text-muted);margin:4px 0 0 24px">${t('device.debug.hint')}</div>
+          <!-- Freeze holds the view still WITHOUT dropping what arrives: a log you are reading
+               scrolls the interesting line off the top, and pausing the stream instead would lose
+               exactly the lines that follow the fault. Copy exists because the useful next step is
+               pasting this into an issue. -->
+          <div id="debugLogTools" style="display:none;margin-top:8px;gap:6px;align-items:center;flex-wrap:wrap">
+            <button class="btn btn-secondary btn-sm" id="debugFreezeBtn">${t('device.debug.freeze')}</button>
+            <button class="btn btn-secondary btn-sm" id="debugCopyBtn">${t('device.debug.copy')}</button>
+            <button class="btn btn-secondary btn-sm" id="debugClearBtn">${t('device.debug.clear')}</button>
+            <span id="debugLogStatus" style="font-size:11px;color:var(--text-muted)"></span>
+          </div>
           <div id="debugLogPanel" style="display:none;margin-top:8px;background:#0b0f1a;border:1px solid var(--border);border-radius:6px;padding:8px;height:220px;overflow-y:auto;font-family:monospace;font-size:11px;line-height:1.45;color:#cbd5e1"></div>
         </div>
 
-        <div style="margin-top:20px;display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-secondary btn-sm" id="rebootBtn">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-            </svg>
-            ${t('device.ctl.reboot_device')}
-          </button>
-          <button class="btn btn-secondary btn-sm" id="screenOffBtn">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
-            </svg>
-            ${t('device.ctl.screen_off')}
-          </button>
-          <button class="btn btn-secondary btn-sm" id="screenOnBtn">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
-            </svg>
-            ${t('device.ctl.screen_on')}
-          </button>
-          <button class="btn btn-secondary btn-sm" id="launchAppBtn">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polygon points="5 3 19 12 5 21 5 3"/>
-            </svg>
-            ${t('device.ctl.launch_player')}
-          </button>
-          <button class="btn btn-secondary btn-sm" id="forceUpdateBtn">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-            </svg>
-            ${t('device.ctl.force_update')}
-          </button>
-          <button class="btn btn-danger btn-sm" id="shutdownBtn">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/>
-            </svg>
-            ${t('device.ctl.shutdown')}
-          </button>
-        </div>
 
         <!-- #109: PiP overlay tester. Pushes device:pip-show/clear via POST /api/pip
              (real triggers are external via the API token; this is for testing). -->
@@ -510,10 +852,26 @@ async function loadDevice(deviceId, activeTab = null) {
         </div>
       </div>
 
+      ${(can('remote.stream') || can('remote.input') || can('remote.screenshot')) ? `
       <!-- Remote Control Tab -->
+      <!-- Web player Tab (#313) -->
+      ${device.enrol_key ? `
+      <div class="tab-content" id="tab-webplayer">
+        <h3 style="font-size:16px;margin-bottom:4px">${t('device.enrol.label')}</h3>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;max-width:70ch">${t('device.enrol.hint')}</div>
+        <div id="enrolBody"></div>
+      </div>
+      ` : ''}
+
       <div class="tab-content" id="tab-remote">
         <div class="remote-container">
+          ${can('remote.stream') ? `
           <div class="remote-screen" id="remoteScreen">
+            <!-- Deliberately NOT rotated with the rest of the previews (#238). This is a control
+                 surface: taps and swipes are sent as fractions of THIS canvas, which is the raw
+                 framebuffer the device replays them into, and it also shows the Android system UI —
+                 which really is landscape on a portrait-hung panel. Turning the picture without
+                 inverting the touch mapping would send every tap to the wrong place. -->
             <canvas id="remoteCanvas" width="960" height="540" style="background:#000;width:100%"></canvas>
             <div class="no-screenshot" id="remoteOverlay" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center">
               <div style="text-align:center">
@@ -525,21 +883,42 @@ async function loadDevice(deviceId, activeTab = null) {
                 <p style="color:var(--text-secondary)">${t('device.remote.start_prompt')}</p>
               </div>
             </div>
-          </div>
+          </div>` : ''}
           <div class="remote-controls">
+            ${can('remote.stream') ? `
             <button class="btn btn-primary" id="startRemoteBtn">${t('device.remote.start')}</button>
             <button class="btn btn-secondary" id="stopRemoteBtn" style="display:none">${t('device.remote.stop')}</button>
-            <hr style="border-color:var(--border);margin:8px 0">
-            <!-- Always available -->
+            <hr style="border-color:var(--border);margin:8px 0">` : ''}
+            ${can('remote.input') ? `
+            <!-- Key pad -->
             <button class="btn btn-secondary btn-sm" onclick="window._sendKey('KEYCODE_VOLUME_UP')">${t('device.remote.vol_up')}</button>
             <button class="btn btn-secondary btn-sm" onclick="window._sendKey('KEYCODE_VOLUME_DOWN')">${t('device.remote.vol_down')}</button>
             <hr style="border-color:var(--border);margin:8px 0">
             <!-- System View controls — auto-unlocked on a device owner (#161: full-screen via the
-                 accessibility path, no MediaProjection consent); locked until enabled otherwise. -->
-            <div id="systemViewControls" style="opacity:${device.tier === 2 ? '1' : '0.4'};pointer-events:${device.tier === 2 ? 'auto' : 'none'}">
+                 accessibility path, no MediaProjection consent); locked until enabled otherwise.
+
+                 LOCKED ONLY ON ANDROID. tier is an Android device-owner concept: NOT NULL
+                 DEFAULT 0 (db/database.js), written only from the APK's DeviceInfo. A BrightSign,
+                 Tizen or web player never sends it, so it is structurally 0 for them and can never
+                 reach 2 — which left this pad permanently click-blocked (pointer-events:none) on
+                 those platforms for keys the player genuinely HANDLES: HOME, BACK, POWER, D-pad and
+                 OK all have cases in server/player/index.html and tizen/js/app.js. Greying an
+                 Android-only gate over a working control is the "button that cannot work" this
+                 capability system exists to prevent, just inverted. Off Android there is no tier to
+                 earn and nothing to unlock.
+
+                 Expression kept INLINE rather than hoisted to a const, because
+                 server/test/device-controls-hidden.test.js renders this template in a bare VM
+                 sandbox that supplies device and isAndroidDevice but no locals from render().
+                 NOTE: no backticks anywhere in this comment - it lives inside a template literal
+                 and one would terminate the string. -->
+            <div id="systemViewControls" style="opacity:${isAndroidDevice(device) && device.tier !== 2 ? '0.4' : '1'};pointer-events:${isAndroidDevice(device) && device.tier !== 2 ? 'none' : 'auto'}">
               <button class="btn btn-secondary btn-sm" onclick="window._sendKey('KEYCODE_HOME')">${t('device.remote.home')}</button>
               <button class="btn btn-secondary btn-sm" onclick="window._sendKey('KEYCODE_BACK')">${t('device.remote.back')}</button>
-              <button class="btn btn-secondary btn-sm" onclick="window._sendKey('KEYCODE_APP_SWITCH')">${t('device.remote.recents')}</button>
+              ${isAndroidDevice(device) ? `
+              <!-- KEYCODE_APP_SWITCH is handled only by the APK (WebSocketService.kt). The web
+                   player and Tizen have no case for it, so off Android it is a dead button. -->
+              <button class="btn btn-secondary btn-sm" onclick="window._sendKey('KEYCODE_APP_SWITCH')">${t('device.remote.recents')}</button>` : ''}
               <button class="btn btn-danger btn-sm" onclick="window._sendKey('KEYCODE_POWER')">${t('device.remote.power')}</button>
               <hr style="border-color:var(--border);margin:8px 0">
               <button class="btn btn-secondary btn-sm" onclick="window._sendKey('KEYCODE_DPAD_UP')">&#9650;</button>
@@ -549,35 +928,43 @@ async function loadDevice(deviceId, activeTab = null) {
               </div>
               <button class="btn btn-secondary btn-sm" onclick="window._sendKey('KEYCODE_DPAD_DOWN')">&#9660;</button>
               <button class="btn btn-primary btn-sm" onclick="window._sendKey('KEYCODE_DPAD_CENTER')">${t('device.remote.ok')}</button>
+              ${isAndroidDevice(device) ? `
               <hr style="border-color:var(--border);margin:8px 0">
-              <button class="btn btn-secondary btn-sm" onclick="window._sendCmd('settings')">${t('device.remote.settings')}</button>
+              <!-- 'settings' opens the Android settings activity. It is not in COMMAND_CAPABILITY,
+                   so the server forwards it to any player and a non-Android one silently drops it
+                   (tizen/js/app.js falls through to "unknown command"). -->
+              <button class="btn btn-secondary btn-sm" onclick="window._sendCmd('settings')">${t('device.remote.settings')}</button>` : ''}
+              ${can('display.power') ? `
               <hr style="border-color:var(--border);margin:8px 0">
               <div style="display:flex;gap:4px">
                 <button class="btn btn-secondary btn-sm" style="flex:1" onclick="window._sendCmd('screen_off')">${t('device.remote.scrn_off')}</button>
                 <button class="btn btn-secondary btn-sm" style="flex:1" onclick="window._sendCmd('screen_on')">${t('device.remote.scrn_on')}</button>
-              </div>
-            </div>
+              </div>` : ''}
+            </div>` : ''}
             ${device.tier === 2 ? `
             <span style="font-size:10px;color:var(--success);line-height:1.2;display:block;margin-top:8px">${t('device.remote.system_view_owner')}</span>
             ` : `
+            ${isAndroidDevice(device) ? `
             <button class="btn btn-primary btn-sm" id="enableSystemCaptureBtn" onclick="window._enableSystemView()" title="${t('device.remote.system_view_tooltip')}" style="margin-top:8px">
               ${t('device.remote.enable_system_view')}
             </button>
-            <span id="systemViewHint" style="font-size:10px;color:var(--text-muted);line-height:1.2;display:block;margin-top:4px">${t('device.remote.system_view_hint')}</span>`}
+            <span id="systemViewHint" style="font-size:10px;color:var(--text-muted);line-height:1.2;display:block;margin-top:4px">${t('device.remote.system_view_hint')}</span>` : ''}`}
           </div>
         </div>
-      </div>
+      </div>` : ''}
 
-      ${(device.client_type === 'apk' || device.android_version) ? `
+      ${(can('audio.volume') || can('display.brightness') || can('system.brightness') || can('system.screen_timeout')) ? `
       <!-- Controls Tab (#160 Track-A system control — no device owner needed) -->
       <div class="tab-content" id="tab-controls">
         <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">${t('device.sysctl.subtitle')}</div>
         <div style="display:grid;grid-template-columns:130px 1fr;gap:14px 14px;align-items:center;font-size:13px;max-width:480px">
+          ${can('audio.volume') ? `
           <label>${t('device.sysctl.volume')}</label>
-          <input type="range" min="0" max="100" value="${Math.round((device.media_volume != null ? device.media_volume : 0.5) * 100)}" id="sysVolume" style="width:100%">
+          <input type="range" min="0" max="100" value="${Math.round((device.media_volume != null ? device.media_volume : 0.5) * 100)}" id="sysVolume" style="width:100%">` : ''}
+          ${can('display.brightness') ? `
           <label>${t('device.sysctl.brightness_window')}</label>
-          <input type="range" min="5" max="100" value="${Math.round((device.window_brightness != null && device.window_brightness >= 0 ? device.window_brightness : 1) * 100)}" id="sysWinBrightness" style="width:100%">
-          ${(device.can_write_settings || device.tier === 2) ? `
+          <input type="range" min="5" max="100" value="${Math.round((device.window_brightness != null && device.window_brightness >= 0 ? device.window_brightness : 1) * 100)}" id="sysWinBrightness" style="width:100%">` : ''}
+          ${(device.can_write_settings || device.tier === 2 || can('system.brightness') || can('system.screen_timeout')) ? `
           <label>${t('device.sysctl.brightness_system')}</label>
           <input type="range" min="5" max="100" value="${Math.round((device.system_brightness != null ? device.system_brightness : 0.8) * 100)}" id="sysBrightness" style="width:100%">
           <label>${t('device.sysctl.sleep')}</label>
@@ -679,18 +1066,45 @@ async function loadDevice(deviceId, activeTab = null) {
     // offline→online transitions derived from the status log).
     renderIncidents(device.deviceEvents || [], device.statusLog || []);
 
+    frameNowPlaying();
     setupTabs();
     setupActions(device);
     setupRemote(device);
     setupPlaylistActions(device);
+    setupEnrolKey(device);
+
+    /*
+     * The checklist, at the end of its own trail.
+     *
+     * ⚠️ THE ASSIGN CONTROL IS BEHIND A TAB. Step 4 says "Open the screen and assign the playlist"
+     * and lands here — on the Now Playing tab, with the playlist picker one tab over and nothing
+     * pointing at it. So the action opens the Playlist tab and focuses the picker, rather than
+     * falling back to `location.hash = '#/'`, which would bounce the user back to the dashboard
+     * they just came from.
+     */
+    gettingStarted.mount(document.getElementById('gettingStarted'), {
+      onAction: (a) => {
+        if (a !== 'assign') return false;
+        document.querySelector('.tab[data-tab="playlist"]')?.click();
+        const picker = document.getElementById('playlistPicker');
+        if (picker) { picker.scrollIntoView({ block: 'center' }); picker.focus(); }
+        return true;
+      },
+      ctaFor: { assign: t('gs.assign.cta_here') },
+    }).catch(() => {});
 
     // Restore active tab if specified (e.g. after layout change)
     if (activeTab) {
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-      const tab = document.querySelector(`.tab[data-tab="${activeTab}"]`);
+      // Both loops above just cleared every tab, so a requested tab that no longer renders (its
+      // capability went away, or the page was reloaded against a player that has since declared a
+      // smaller set) would leave NO tab selected and the page blank. Fall back to Info, which is
+      // never gated.
+      const wanted = document.getElementById(`tab-${activeTab}`) ? activeTab : 'info';
+      const tab = document.querySelector(`.tab[data-tab="${wanted}"]`);
       if (tab) tab.classList.add('active');
-      const content = document.getElementById(`tab-${activeTab}`);
+      const content = document.getElementById(`tab-${wanted}`);
       if (content) content.classList.add('active');
     }
 
@@ -709,6 +1123,154 @@ async function loadDevice(deviceId, activeTab = null) {
   } catch (err) {
     contentEl.innerHTML = `<div class="empty-state"><h3>${t('device.failed_load')}</h3><p>${esc(err.message)}</p></div>`;
   }
+}
+
+/*
+ * Trigger diagnostics.
+ *
+ * ⚠️ THIS PANEL EXISTS TO ANSWER ONE QUESTION: an installer standing in a lobby pressing a button
+ * that does nothing needs to know whether packets are reaching this screen. If they are, it is the
+ * token or the secret and they fix it from a laptop. If they are not, it is the network and they
+ * need whoever owns the switch. Those are different afternoons, and every other number here is
+ * secondary to telling them apart.
+ */
+/*
+ * The listener settings — the half that makes triggers reachable at all.
+ *
+ * ⚠️ Until this existed the feature was INERT on any system configured through the product: nothing
+ * wrote trigger_secret or the accept flags, so the secret was always NULL, every payload was
+ * rejected as bad_secret, and no listener bound. The diagnostics panel below it would faithfully
+ * report "nothing has arrived" forever, which was true and useless.
+ *
+ * Both doors default OFF and are shown as separate switches on purpose: UDP is the larger risk of
+ * the two, because one datagram to a broadcast or multicast address reaches EVERY player on the
+ * segment at once, which is categorically more than a unicast POST at one host.
+ */
+function renderTriggerConfig(device) {
+  const secretSet = !!device.trigger_secret;
+  const box = 'padding:6px 8px;background:#0b0f1a;border:1px solid var(--border);border-radius:6px;color:var(--text)';
+  return `
+      <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+        <div style="font-weight:600;margin-bottom:4px">${t('device.trigcfg.title')}</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">${esc(t('device.trigcfg.intro'))}</div>
+
+        <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+          <label style="display:flex;gap:6px;align-items:center;font-size:13px">
+            <input type="checkbox" id="trigHttp" ${device.triggers_accept_http ? 'checked' : ''}>
+            ${t('device.trigcfg.accept_http')}
+          </label>
+          <input id="trigHttpPort" type="number" min="1024" max="65534" placeholder="8079"
+                 value="${device.trigger_http_port || ''}" style="width:100px;${box}">
+          <label style="display:flex;gap:6px;align-items:center;font-size:13px">
+            <input type="checkbox" id="trigUdp" ${device.triggers_accept_udp ? 'checked' : ''}>
+            ${t('device.trigcfg.accept_udp')}
+          </label>
+          <input id="trigUdpPort" type="number" min="1024" max="65534" placeholder="7847"
+                 value="${device.trigger_udp_port || ''}" style="width:100px;${box}">
+        </div>
+
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+          <input id="trigGroup" type="text" placeholder="${t('device.trigcfg.group_ph')}"
+                 value="${esc(device.trigger_multicast_group || '')}" style="width:180px;${box}">
+          <input id="trigClearAll" type="text" placeholder="${t('device.trigcfg.clear_all_ph')}"
+                 value="${esc(device.trigger_clear_all_token || '')}" style="width:180px;${box}">
+          <button class="btn btn-primary btn-sm" id="saveTrigCfgBtn">${t('device.trigcfg.save')}</button>
+        </div>
+
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <span style="font-size:13px">${t('device.trigcfg.secret')}:</span>
+          <code id="trigSecretVal" style="font-size:12px;background:#0b0f1a;border:1px solid var(--border);
+                border-radius:6px;padding:4px 8px">${secretSet ? esc(device.trigger_secret) : t('device.trigcfg.secret_unset')}</code>
+          <button class="btn btn-secondary btn-sm" id="rotateTrigSecretBtn">
+            ${secretSet ? t('device.trigcfg.rotate') : t('device.trigcfg.generate')}</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:6px">${esc(t('device.trigcfg.secret_note'))}</div>
+      </div>`;
+}
+
+function renderTriggerDiagnostics(device) {
+  let st = null;
+  try { st = device.trigger_status ? JSON.parse(device.trigger_status) : null; } catch (e) { st = null; }
+  if (!st) return '';
+
+  const chip = (label, tone) => `<span style="font-family:monospace;font-size:11px;background:var(--bg-input);` +
+    `border:1px solid var(--${tone || 'border'});color:var(--${tone === 'border' ? 'text' : (tone || 'text')});` +
+    `border-radius:4px;padding:2px 6px">${esc(label)}</span>`;
+
+  const mc = st.multicast || {};
+  const rej = st.rejected || {};
+  const rejTotal = Object.values(rej).reduce((n, v) => n + (Number(v) || 0), 0);
+
+  /*
+   * The verdict line. Deliberately a sentence rather than a number, because the number is only
+   * meaningful next to the other one: traffic arriving with zero accepts is a credential problem,
+   * nothing arriving at all is a network problem, and an operator should not have to derive that.
+   */
+  let verdict, tone;
+  if (!st.received) { verdict = t('device.trig.none_seen'); tone = 'text-muted'; }
+  else if (!st.accepted) { verdict = t('device.trig.arriving_refused'); tone = 'warning'; }
+  else { verdict = t('device.trig.working'); tone = 'success'; }
+
+  const loop = mc.loopback === 'ok' ? chip(t('device.trig.self_ok'), 'success')
+    : mc.loopback === 'fail' ? chip(t('device.trig.self_fail'), 'danger')
+    : mc.loopback ? chip(String(mc.loopback)) : '';
+
+  return `
+      <div style="margin-top:20px">
+        <h4 style="font-size:13px;margin-bottom:8px">${t('device.trig.title')}</h4>
+        <div style="font-size:12px;color:var(--${tone});margin-bottom:8px">${esc(verdict)}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+          ${st.listeners && st.listeners.http ? chip('HTTP :' + st.listeners.http) : ''}
+          ${st.listeners && st.listeners.udp ? chip('UDP :' + st.listeners.udp) : ''}
+          ${mc.group ? chip(mc.group + (mc.iface ? ' @ ' + mc.iface : '')) : ''}
+          ${loop}
+          ${mc.rejoin_count ? chip(t('device.trig.rejoins', { n: mc.rejoin_count })) : ''}
+        </div>
+        <div style="font-size:11px;color:var(--text-muted)">
+          ${esc(t('device.trig.counts', { received: st.received || 0, accepted: st.accepted || 0, rejected: rejTotal }))}
+          ${st.last_datagram_at ? ' · ' + esc(t('device.trig.last_seen', { when: new Date(st.last_datagram_at).toLocaleString() })) : ''}
+          · ${esc(t('device.trig.definitions', { n: st.definitions || 0 }))}
+        </div>
+        ${rejTotal ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px">${
+          Object.entries(rej).filter(([, v]) => v).map(([k, v]) => esc(k + ' ' + v)).join(' · ')}</div>` : ''}
+        ${st.active ? `<div style="font-size:12px;margin-top:8px">${
+          esc(t('device.trig.showing', { name: st.active.name, source: st.active.source }))}</div>` : ''}
+        ${mc.last_join_error ? `<div style="font-size:11px;color:var(--danger);margin-top:4px">${
+          esc(t('device.trig.join_error', { err: mc.last_join_error }))}</div>` : ''}
+      </div>`;
+}
+
+/*
+ * Where this screen's playlist came from.
+ *
+ * Until inheritance existed the dashboard could not answer this: devices.playlist_id was COPIED
+ * down from the group or wall, so a chosen playlist and an inherited one were the same byte and
+ * the UI had nothing to distinguish. The operator's question — "why is this screen showing that?"
+ * — had no answer on the page. Now playlist_source says which, and playlist_source_name says
+ * which group or wall, so the badge can name it rather than shrug.
+ *
+ * The revert only appears on an override, because it is the only state there is something to
+ * revert FROM. It clears the override; it does not blank the screen.
+ */
+function playlistSourceBadge(device) {
+  const chip = (text, title, color) =>
+    `<span title="${esc(title)}" style="font-size:11px;padding:2px 8px;border-radius:10px;`
+    + `background:var(--bg-input);color:${color};white-space:nowrap">${esc(text)}</span>`;
+
+  if (device.playlist_source === 'device') {
+    return chip(t('device.playlist.overridden'), t('device.playlist.overridden_tip'), 'var(--text-secondary)')
+      + `<button class="btn btn-secondary btn-sm" id="revertPlaylistBtn" title="${esc(t('device.playlist.revert_tip'))}"`
+      + ` style="font-size:11px;padding:2px 8px">${t('device.playlist.revert')}</button>`;
+  }
+  if (device.playlist_source === 'group' || device.playlist_source === 'wall') {
+    const name = device.playlist_source_name;
+    return chip(
+      name ? t('device.playlist.inherited_from', { name }) : t('device.playlist.inherited_generic'),
+      name ? t('device.playlist.inherited_tip', { name }) : t('device.playlist.inherited_generic'),
+      'var(--text-secondary)',
+    );
+  }
+  return '';
 }
 
 function renderPlaylist(assignments) {
@@ -768,6 +1330,63 @@ function renderPlaylist(assignments) {
   `).join('');
 }
 
+/*
+ * #313 — the web player URL an operator pastes into vMix.
+ *
+ * ⚠️ WHY IT IS NOT MINTED AUTOMATICALLY. Nearly every display keeps its own credentials and needs
+ * none of this. A key created for all of them would be a durable secret sitting on rows that never
+ * use one, for no benefit. So the operator asks for it on the screen that needs it.
+ */
+function setupEnrolKey(device) {
+  const host = document.getElementById('enrolBody');
+  if (!host) return;
+
+  const draw = () => {
+    if (!device.enrol_key) return;   // the tab only renders for a display that has one
+    const url = `${window.location.origin}/player?k=${encodeURIComponent(device.enrol_key)}`;
+    host.innerHTML = `
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <input class="input" id="enrolUrl" readonly value="${esc(url)}"
+               style="flex:1;min-width:260px;font-family:monospace;font-size:11px">
+        <button class="btn btn-secondary btn-sm" id="enrolCopyBtn">${t('device.enrol.copy')}</button>
+        <button class="btn btn-secondary btn-sm" id="enrolRollBtn">${t('device.enrol.roll')}</button>
+      </div>
+      <div style="font-size:11px;color:#fbbf24;margin-top:6px">${t('device.enrol.warning')}</div>`;
+
+    host.querySelector('#enrolCopyBtn').addEventListener('click', () => {
+      const el = host.querySelector('#enrolUrl');
+      el.select();
+      // execCommand rather than navigator.clipboard: the dashboard is served over plain HTTP on
+      // plenty of self-hosted LANs, where the async clipboard API is unavailable.
+      try { document.execCommand('copy'); showToast(t('device.enrol.copied')); }
+      catch { showToast(t('device.enrol.copy_failed'), 'error'); }
+    });
+    host.querySelector('#enrolRollBtn').addEventListener('click', () => {
+      if (!confirm(t('device.enrol.confirm_roll'))) return;
+      mint(true);
+    });
+    /*
+     * ⚠️ THERE IS DELIBERATELY NO REVOKE BUTTON HERE, and the API route that can do it is not
+     * wired to one. This display exists BECAUSE its player cannot remember credentials: the URL is
+     * the only way it ever gets back. Revoking would brick it at its next restart, with the
+     * dashboard still showing a perfectly healthy-looking screen. "New URL" is the recovery for a
+     * leak — it invalidates the old link without stranding anything — and a display that should
+     * genuinely stop existing is removed with Remove, up in the header, which says what it does.
+     */
+  };
+
+  async function mint(rolled) {
+    try {
+      const r = await api.createEnrolKey(device.id);
+      device.enrol_key = r.enrol_key;
+      showToast(rolled ? t('device.enrol.rolled') : t('device.enrol.created'));
+      draw();
+    } catch (err) { showToast(err.message, 'error'); }
+  }
+
+  draw();
+}
+
 function setupTabs() {
   document.querySelectorAll('.tab').forEach(tab => {
     tab.addEventListener('click', () => {
@@ -783,8 +1402,13 @@ function setupTabs() {
 // same-origin (dashboard CSP frame-src 'self' allows it). Shows the device's CURRENT
 // playlist in the device's OWN layout/orientation (server payload). wall members
 // preview full-frame (server forces wall_config:null in v1).
+//
+// #238: the iframe is the panel's FRAMEBUFFER, not its face. It used to be given the as-displayed
+// 9/16 shape directly, so on a portrait device the player rotated content a second time inside a
+// box that was already the finished picture and the preview came out sideways — while the panel
+// itself was right, which is the worst possible split for someone trying to verify their work.
+// The stage is the face; the frame is landscape underneath it and the mount turns it back.
 function showDevicePreview(device) {
-  const portrait = (device.orientation || '').includes('portrait');
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:10000;padding:16px';
   overlay.innerHTML = `
@@ -794,10 +1418,13 @@ function showDevicePreview(device) {
         <button class="btn btn-secondary btn-sm" id="dpvClose">${t('widget.close')}</button>
       </div>
       <div style="padding:16px;display:flex;align-items:center;justify-content:center;background:#000">
-        <iframe style="height:78vh;max-width:92vw;aspect-ratio:${portrait ? '9 / 16' : '16 / 9'};border:0;background:#000" src="/player?preview=1&device=${encodeURIComponent(device.id)}&t=${Date.now()}"></iframe>
+        <div id="dpvStage" style="height:78vh;max-width:92vw;aspect-ratio:${displayAspectRatio(device.orientation)};background:#000">
+          <iframe style="border:0;background:#000" src="/player?preview=1&device=${encodeURIComponent(device.id)}&t=${Date.now()}"></iframe>
+        </div>
       </div>
     </div>`;
   document.body.appendChild(overlay);
+  frameDeviceOutput(overlay.querySelector('#dpvStage'), overlay.querySelector('#dpvStage iframe'), device.orientation);
   const close = () => overlay.remove();
   overlay.querySelector('#dpvClose').onclick = close;
   overlay.onclick = (e) => { if (e.target === overlay) close(); };
@@ -904,12 +1531,43 @@ async function showReAdoptModal(device) {
 
 function setupActions(device) {
   // #104 Preview button
+  // PIN rotate / set. The response says whether the panel took it LIVE: an offline display
+  // applies it on its next reconnect, and an operator rotating a leaked PIN needs to know
+  // which of those happened rather than assuming access is already revoked.
+  async function applyPin(body, confirmMsg) {
+    if (confirmMsg && !confirm(confirmMsg)) return;
+    try {
+      const r = await api.setDevicePin(device.id, body);
+      device.settings_pin = r.settings_pin;
+      const el = document.querySelector('#rotatePinBtn')?.closest('.info-card')?.querySelector('.info-card-value');
+      if (el) el.textContent = r.settings_pin;
+      showToast(r.delivered ? t('device.pin.updated_live') : t('device.pin.updated_offline'), 'success');
+    } catch (e) {
+      showToast(e?.message || t('device.pin.failed'), 'error');
+    }
+  }
+
+  document.getElementById('rotatePinBtn')?.addEventListener('click', () =>
+    applyPin({ rotate: true }, t('device.pin.rotate_confirm')));
+
+  document.getElementById('setPinBtn')?.addEventListener('click', () => {
+    const pin = prompt(t('device.pin.set_prompt'));
+    if (pin === null) return;
+    applyPin({ pin });
+  });
+
   document.getElementById('devicePreviewBtn')?.addEventListener('click', () => showDevicePreview(device));
 
-  // Screenshot button
+  // Screenshot button — pass a callback so the server's verdict surfaces as a toast
+  // instead of the request silently going nowhere (offline device, or a player type
+  // that can't capture at all, e.g. BrightSign).
   document.getElementById('screenshotBtn')?.addEventListener('click', () => {
-    requestScreenshot(device.id);
-    showToast(t('device.toast.screenshot_requested'), 'info');
+    requestScreenshot(device.id, (ack) => {
+      if (ack?.delivered) showToast(t('device.toast.screenshot_requested'), 'info');
+      else if (ack?.reason === 'unsupported') showToast(t('device.toast.screenshot_unsupported'), 'warning');
+      else if (ack?.reason === 'offline') showToast(t('device.toast.screenshot_offline'), 'warning');
+      else showToast(t('device.toast.screenshot_failed'), 'error');
+    });
   });
 
   // Rename
@@ -950,16 +1608,61 @@ function setupActions(device) {
     const enabled = e.target.checked;
     const panel = document.getElementById('debugLogPanel');
     if (panel) panel.style.display = enabled ? 'block' : 'none';
+    const tools = document.getElementById('debugLogTools');
+    if (tools) tools.style.display = enabled ? 'flex' : 'none';
+    debugStreamOn = enabled;
+    // Unticking and reticking should not resume into a frozen panel the operator forgot about.
+    if (!enabled) { debugFrozen = false; debugHeld = []; }
+    updateDebugTools();
     sendCommand(device.id, 'set_debug', { enabled });
+  });
+
+  document.getElementById('debugFreezeBtn')?.addEventListener('click', () => setDebugFrozen(!debugFrozen));
+
+  document.getElementById('debugClearBtn')?.addEventListener('click', () => {
+    const panel = document.getElementById('debugLogPanel');
+    if (panel) panel.textContent = '';
+    debugHeld = [];
+    updateDebugTools();
+  });
+
+  document.getElementById('debugCopyBtn')?.addEventListener('click', async () => {
+    const panel = document.getElementById('debugLogPanel');
+    // Copy what is ON SCREEN. Anything held while frozen is deliberately excluded — the operator
+    // is copying the capture they are looking at, and silently appending lines they have not seen
+    // would make the paste disagree with the panel.
+    const text = panel ? [...panel.children].map((el) => el.textContent).join('\n') : '';
+    if (!text) { showToast(t('device.debug.copy_empty'), 'error'); return; }
+    const header = `${device.name || device.id} — ${device.platform || ''} ${device.hardware_model || ''} — ${new Date().toISOString()}`.trim();
+    const ok = await copyToClipboard(`${header}\n${'-'.repeat(header.length)}\n${text}\n`);
+    showToast(ok ? t('device.debug.copied', { n: panel.childElementCount }) : t('device.debug.copy_failed'), ok ? 'success' : 'error');
   });
 
   document.getElementById('saveNotesBtn')?.addEventListener('click', async () => {
     try {
+  // #325: "Use the default" clears the override. A colour input cannot be empty, so the intent is
+  // recorded on the element and read at save time.
+  const bgReset = document.getElementById('devBackgroundReset');
+  const bgInput = document.getElementById('devBackground');
+  if (bgReset && bgInput && !bgReset.dataset.wired) {
+    bgReset.dataset.wired = '1';
+    bgReset.addEventListener('click', () => {
+      bgInput.value = '#000000';
+      bgInput.dataset.cleared = '1';
+    });
+    bgInput.addEventListener('input', () => { bgInput.dataset.cleared = ''; });
+  }
+
       await api.updateDevice(device.id, {
         notes: document.getElementById('deviceNotes').value,
         orientation: document.getElementById('deviceOrientation').value,
+        // #325: the reset button clears the field, which sends '' and the API stores NULL, putting
+        // the screen back on the player's own default rather than pinning it to black.
+        background_color: (document.getElementById('devBackground')?.dataset.cleared === '1')
+          ? '' : (document.getElementById('devBackground')?.value || ''),
         default_content_id: document.getElementById('deviceDefaultContent').value || null,
         ota_enabled: document.getElementById('otaToggle')?.checked ? 1 : 0,
+        ota_beta: document.getElementById('otaBetaToggle')?.checked ? 1 : 0,
         reboot_schedule: document.getElementById('rebootSchedule')?.value || null,
       });
       showToast(t('device.toast.settings_saved'), 'success');
@@ -1022,21 +1725,48 @@ function setupActions(device) {
 
     playlistPicker.addEventListener('change', async () => {
       const newPlaylistId = playlistPicker.value;
-      if (!newPlaylistId) return; // Don't allow deselecting for now
       try {
-        await api.assignPlaylistToDevice(newPlaylistId, device.id);
-        device.playlist_id = newPlaylistId;
-        const assignments = await api.getAssignments(device.id);
-        const pc = document.getElementById('playlistContainer');
-        pc.innerHTML = renderPlaylist(assignments);
-        hydrateAuthImages(pc);
-        attachRemoveHandlers(device);
+        // Empty value is the "No playlist" option. It used to be discarded right here, so the
+        // option was offered, selecting it did nothing, and nothing said so (#234).
+        if (newPlaylistId) {
+          await api.assignPlaylistToDevice(newPlaylistId, device.id);
+        } else {
+          await api.clearDevicePlaylist(device.id);
+        }
+        device.playlist_id = newPlaylistId || null;
         showToast(t('device.toast.playlist_changed'));
+        /*
+         * ⚠️ RE-RENDER THE PAGE, NOT JUST THE ITEM LIST.
+         *
+         * This used to patch #playlistContainer by hand, which repaints the items and nothing
+         * else — and the "Unpublished changes" banner is rendered from device.playlist_status,
+         * which only the page render reads. So assigning a playlist that had never been published
+         * left the screen dark with the one banner that explains why NOT IN THE DOM AT ALL. It
+         * appeared on the next full load, which is also when the getting-started checklist
+         * vanishes, so it read as "the warning only shows up once the steps go away".
+         *
+         * loadDevice re-reads the device (playlist_status, playlist_has_published included) and
+         * restores the Playlist tab — the same thing the discard handler above does, for the same
+         * reason.
+         */
+        loadDevice(device.id, 'playlist');
       } catch (err) {
         showToast(err.message, 'error');
       }
     });
   }
+
+  // Revert an override: clear it and let the group or wall take over again. The server's DELETE
+  // clears playlist_source too, so this is "stop being special", not "go blank".
+  document.getElementById('revertPlaylistBtn')?.addEventListener('click', async () => {
+    try {
+      await api.clearDevicePlaylist(device.id);
+      showToast(t('device.toast.playlist_reverted'));
+      loadDevice(device.id, 'playlist');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
 
   // Copy playlist to another device
   document.getElementById('copyPlaylistBtn')?.addEventListener('click', async () => {
@@ -1132,13 +1862,18 @@ function setupActions(device) {
     }, 3000);
   });
 
-  // Send a command and surface the three-state ack as a toast.
+  // Send a command and surface the ack as a toast.
   // - delivered: device received it (green/success)
   // - queued: device is offline, will deliver on reconnect (amber/warning)
+  // - unsupported: the player cannot do this at all (red/error, names the capability)
   // - no_ack / fallback: server didn't respond or queue unavailable (red/error)
   function sendWithFeedback(type, cmdLabel, successKey) {
     sendCommand(device.id, type, {}, (ack) => {
       if (ack?.delivered) showToast(t(successKey), 'success');
+      // Reachable from a stale tab rendered before the panel declared its capabilities: the
+      // button was there when the page loaded and is gone on reload. Say why rather than
+      // showing the generic "undeliverable", which reads as a network problem.
+      else if (ack?.reason === 'unsupported') showToast(t('device.toast.command_unsupported', { cmd: cmdLabel, cap: ack.capability || '' }), 'error');
       else if (ack?.queued) showToast(t('device.toast.command_queued', { cmd: cmdLabel }), 'warning');
       else if (ack?.reason === 'no_ack') showToast(t('device.toast.command_no_ack', { cmd: cmdLabel }), 'error');
       else showToast(t('device.toast.command_undeliverable', { cmd: cmdLabel }), 'error');
@@ -1209,6 +1944,12 @@ function setupActions(device) {
     sendWithFeedback('update', 'Update', 'device.toast.update_triggered');
   });
 
+  // Drops every staged APK on the panel so the next check downloads afresh. The escape hatch for a
+  // player holding a bad download — a cached file that cannot install but is reused every attempt.
+  document.getElementById('clearUpdateCacheBtn')?.addEventListener('click', () => {
+    sendWithFeedback('clear_update_cache', 'Clear update cache', 'device.toast.update_cache_cleared');
+  });
+
   // #109: PiP overlay tester — pushes/clears an overlay via the public API (POST /api/pip).
   document.getElementById('sendPipBtn')?.addEventListener('click', async () => {
     const uri = (document.getElementById('pipUri')?.value || '').trim();
@@ -1226,6 +1967,46 @@ function setupActions(device) {
   document.getElementById('clearPipBtn')?.addEventListener('click', async () => {
     try { await api.clearPip(device.id); showToast('Overlay cleared', 'success'); }
     catch (err) { showToast(err.message, 'error'); }
+  });
+
+  // Trigger listener settings. `delivered` distinguishes "the panel has this now" from "it will
+  // pick it up when it reconnects" — the operator is told which, rather than left to assume.
+  document.getElementById('saveTrigCfgBtn')?.addEventListener('click', async () => {
+    const num = (id) => {
+      const v = (document.getElementById(id)?.value || '').trim();
+      return v === '' ? null : Number(v);
+    };
+    const str = (id) => {
+      const v = (document.getElementById(id)?.value || '').trim();
+      return v === '' ? null : v;
+    };
+    try {
+      const res = await api.setTriggerConfig(device.id, {
+        accept_http: !!document.getElementById('trigHttp')?.checked,
+        accept_udp: !!document.getElementById('trigUdp')?.checked,
+        http_port: num('trigHttpPort'),
+        udp_port: num('trigUdpPort'),
+        multicast_group: str('trigGroup'),
+        clear_all_token: str('trigClearAll'),
+      });
+      showToast(res.delivered ? t('device.trigcfg.saved_live') : t('device.trigcfg.saved_queued'),
+        res.delivered ? 'success' : 'warning');
+    } catch (err) { showToast(err.message, 'error'); }
+  });
+
+  document.getElementById('rotateTrigSecretBtn')?.addEventListener('click', async () => {
+    // ⚠️ Rotating invalidates whatever the integrator already typed into their control system, and
+    // there is no way to un-rotate. Confirm rather than treating it as an ordinary button.
+    if (!confirm(t('device.trigcfg.rotate_confirm'))) return;
+    try {
+      const res = await api.setTriggerSecret(device.id, { rotate: true });
+      if (res.secret) {
+        const el = document.getElementById('trigSecretVal');
+        if (el) el.textContent = res.secret;
+      }
+      showToast(res.delivered ? t('device.trigcfg.saved_live') : t('device.trigcfg.saved_queued'),
+        res.delivered ? 'success' : 'warning');
+    } catch (err) { showToast(err.message, 'error'); }
   });
 }
 
@@ -1391,7 +2172,7 @@ async function setupPlaylistActions(device) {
               ${zones.length > 0 ? `
                 <select id="assignZone" class="input" style="background:var(--bg-input)">
                   <option value="">${t('device.assign.zone_default')}</option>
-                  ${zones.map(z => `<option value="${z.id}">${z.name} (${Math.round(z.width_percent)}% x ${Math.round(z.height_percent)}%)</option>`).join('')}
+                  ${zones.map(z => `<option value="${z.id}">${esc(z.name)} (${Math.round(z.width_percent)}% x ${Math.round(z.height_percent)}%)</option>`).join('')}
                 </select>
               ` : !device.layout_id ? `
                 <div style="font-size:12px;color:var(--text-muted);padding:6px 0;line-height:1.5">${t('device.assign.zone_no_layout')}</div>
@@ -1403,7 +2184,9 @@ async function setupPlaylistActions(device) {
             </div>
             <div class="form-group">
               <label>${t('device.assign.duration_label')}</label>
-              <input type="number" id="assignDuration" class="input" value="10" min="1" max="3600">
+              <!-- max is the server's absurd-duration ceiling (12h): a feature-length clip
+                   pre-filled from its own length must not land in an out-of-range field. -->
+              <input type="number" id="assignDuration" class="input" value="10" min="1" max="43200">
             </div>
             <!-- Tabs -->
             <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:12px">
@@ -1414,7 +2197,7 @@ async function setupPlaylistActions(device) {
             <!-- Media grid -->
             <div class="assign-content-grid" id="assignMedia">
               ${content.map(c => `
-                <div class="assign-content-item" data-content-id="${c.id}" data-type="content">
+                <div class="assign-content-item" data-content-id="${c.id}" data-type="content" data-duration="${Number(c.duration_sec) > 0 ? Math.ceil(c.duration_sec) : ''}">
                   ${c.thumbnail_path
                     ? `<img data-auth-src="/api/content/${c.id}/thumbnail" alt="">`
                     : c.remote_url
@@ -1438,7 +2221,7 @@ async function setupPlaylistActions(device) {
                   <div style="aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;background:var(--bg-primary);font-size:32px">
                     ${icons[w.widget_type] || '&#9881;'}
                   </div>
-                  <div class="assign-content-item-name">${w.name}</div>
+                  <div class="assign-content-item-name">${esc(w.name)}</div>
                 </div>`;
               }).join('') || `<p style="color:var(--text-muted);padding:16px;text-align:center">${t('device.assign.no_widgets')} <a href="#/widgets" style="color:var(--accent)">${t('device.assign.create_one')}</a></p>`}
             </div>
@@ -1447,7 +2230,7 @@ async function setupPlaylistActions(device) {
               ${kioskPages.map(k => `
                 <div class="assign-content-item" data-content-id="${k.id}" data-type="kiosk">
                   <div style="aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;background:var(--bg-primary);font-size:32px">&#128433;</div>
-                  <div class="assign-content-item-name">${k.name}</div>
+                  <div class="assign-content-item-name">${esc(k.name)}</div>
                 </div>
               `).join('') || `<p style="color:var(--text-muted);padding:16px;text-align:center">${t('device.assign.no_kiosk')} <a href="#/kiosk" style="color:var(--accent)">${t('device.assign.create_one')}</a></p>`}
             </div>
@@ -1474,12 +2257,21 @@ async function setupPlaylistActions(device) {
 
       let selectedId = null;
       let selectedType = null;
+      // #237: this modal always SENDS a duration, so the server's "default a video to its own
+      // length" rule can never fire here — the field has to carry the clip length itself, or
+      // picking a 32s video silently assigns a 10s item that cuts off. Anything the operator
+      // typed is theirs and is never overwritten.
+      const durInput = modal.querySelector('#assignDuration');
+      let durationTouched = false;
+      durInput?.addEventListener('input', () => { durationTouched = true; });
       modal.querySelectorAll('.assign-content-item').forEach(item => {
         item.addEventListener('click', () => {
           modal.querySelectorAll('.assign-content-item').forEach(i => i.classList.remove('selected'));
           item.classList.add('selected');
           selectedId = item.dataset.contentId;
           selectedType = item.dataset.type;
+          const clip = parseInt(item.dataset.duration || '', 10);
+          if (durInput && !durationTouched) durInput.value = clip > 0 ? clip : 10;
         });
       });
 
@@ -1563,7 +2355,7 @@ function attachRemoveHandlers(device) {
         if (orphan) { select.style.borderColor = 'var(--danger)'; select.style.color = 'var(--danger)'; }
         select.onchange = async () => {
           try {
-            await api.updateAssignment(assignmentId, { zone_id: select.value || null });
+            await api.updateAssignment(assignmentId, { zone_id: select.value || null }, device.id);
             showToast(t('device.toast.zone_updated'), 'success');
             loadDevice(device.id, 'playlist');
           } catch (err) { showToast(err.message, 'error'); }
@@ -1593,7 +2385,7 @@ function attachRemoveHandlers(device) {
       const id = btn.dataset.muteAssignment;
       const currentlyMuted = btn.dataset.muted === '1';
       try {
-        await api.updateAssignment(id, { muted: !currentlyMuted });
+        await api.updateAssignment(id, { muted: !currentlyMuted }, device.id);
         showToast(currentlyMuted ? t('device.toast.unmuted') : t('device.toast.muted'), 'success');
         loadDevice(device.id, 'playlist');
       } catch (err) { showToast(err.message, 'error'); }
@@ -1606,7 +2398,7 @@ function attachRemoveHandlers(device) {
       e.stopPropagation();
       const id = btn.dataset.removeAssignment;
       try {
-        await api.deleteAssignment(id);
+        await api.deleteAssignment(id, device.id);
         showToast(t('device.toast.removed_from_playlist'), 'success');
         loadDevice(device.id, 'playlist');
       } catch (err) {
@@ -1868,7 +2660,10 @@ function updateTelemetryDisplay(telemetry) {
   };
   if (telemetry.battery_level != null) update('telBattery', telemetry.battery_level + '%');
   if (telemetry.storage_free_mb) update('telStorage', t('device.info.size_free', { size: formatBytes(telemetry.storage_free_mb) }));
-  if (telemetry.wifi_ssid) update('telWifi', telemetry.wifi_ssid);
+  if (telemetry.local_ip) update('telLocalIp', telemetry.local_ip);
+  // update() no-ops when the card is absent, which is the case for a v4-only panel — a screen that
+  // acquires a v6 address mid-session picks the card up on the next full render, not this path.
+  if (telemetry.local_ip6) update('telLocalIp6', telemetry.local_ip6);
   if (telemetry.wifi_rssi) update('telRssi', telemetry.wifi_rssi + ' dBm');
   if (telemetry.uptime_seconds) update('telUptime', formatUptime(telemetry.uptime_seconds));
   if (telemetry.ram_free_mb) update('telRam', t('device.info.size_free', { size: formatBytes(telemetry.ram_free_mb) }));
@@ -1945,6 +2740,12 @@ export function cleanup() {
   if (shellHandler) off('shell-result', shellHandler);   // #161 owner-tools listener
   if (screenshotInterval) clearInterval(screenshotInterval);
   if (remoteActive && currentDevice) stopRemote(currentDevice.id);
+  // Same reasoning as stopRemote above: an operator who navigates away has stopped watching, so
+  // the display should stop talking. Must run BEFORE currentDevice is cleared.
+  if (debugStreamOn && currentDevice) sendCommand(currentDevice.id, 'set_debug', { enabled: false });
+  debugStreamOn = false;
+  debugFrozen = false;
+  debugHeld = [];
   remoteActive = false;
   currentDevice = null;
   window._sendKey = null;

@@ -38,12 +38,26 @@ class UpdateChecker(private val context: Context) {
     private val CHECK_INTERVAL = 30 * 60 * 1000L
 
     private var installReceiverRegistered = false
+    // Held so shutdown() can unregister it; without a handle the receiver outlives the Activity.
+    private var installReceiver: BroadcastReceiver? = null
 
     // #139: report OTA status to the dashboard (device:log, tag "ota"). Wired by MainActivity
     // to WebSocketService.sendLog; null until then. Read lazily so binding order doesn't matter.
     // The throttle thresholds + decision rules live in OtaThrottle (pure, unit-tested); this
     // class is the imperative shell that persists state and does the download/install.
     var otaLogReporter: ((level: String, message: String) -> Unit)? = null
+
+    /*
+     * Why the last download/verify attempt failed, in specific terms.
+     *
+     * The caller could only ever say "failed to download or failed signature verification", which
+     * covers SEVEN distinct branches — three of them download failures where verification never
+     * runs at all. Every specific reason went to logcat, which an unprivileged app UID cannot read
+     * on Android 9, so in the field the message was unactionable: it named a symptom shared by
+     * unrelated causes and pointed at the wrong half of the code as often as the right one.
+     * Diagnosing one occurrence took an evening. This makes the next one a sentence.
+     */
+    private var lastFailure: String? = null
 
     private fun report(level: String, message: String) {
         when (level) { "error" -> Log.e(TAG, message); "warn" -> Log.w(TAG, message); else -> Log.i(TAG, message) }
@@ -92,6 +106,7 @@ class UpdateChecker(private val context: Context) {
             @Suppress("UnspecifiedRegisterReceiverFlag") context.registerReceiver(receiver, filter)
         }
         installReceiverRegistered = true
+        installReceiver = receiver
     }
 
     fun startPeriodicCheck() {
@@ -113,16 +128,38 @@ class UpdateChecker(private val context: Context) {
         checkTimer = null
     }
 
-    fun checkForUpdate() {
-        if (config.serverUrl.isEmpty()) return
-        // #155/#161: if a foreign device owner (an MDM/DPC) manages this panel, IT owns updates.
-        // Stand down — never self-install: on a managed device the self-install confirm dialog
-        // can't be reliably auto-dismissed and ends up over customer content. The MDM pushes the
-        // APK instead. Pure client-side safety net, independent of the server-side OTA switch.
-        if (isManagedByForeignDeviceOwner()) {
-            Log.i(TAG, "Managed by a foreign device owner (MDM) — self-OTA stands down; MDM owns updates")
-            return
+    /**
+     * Full teardown for an Activity that is going away.
+     *
+     * stopPeriodicCheck alone leaves the install receiver registered against a dead Context, and
+     * installReceiverRegistered is per-instance — so each Activity recreate produced another
+     * checker polling /api/update/check and another receiver for INSTALL_COMPLETE. N of those means
+     * one STATUS_PENDING_USER_ACTION fires N confirm dialogs over customer content, and concurrent
+     * checkers race in tryPackageInstaller, which begins by abandoning ALL of this app's installer
+     * sessions — so one can abandon another's staged session mid-flight and the update never lands.
+     */
+    fun shutdown() {
+        stopPeriodicCheck()
+        if (installReceiverRegistered) {
+            installReceiver?.let { r -> try { context.unregisterReceiver(r) } catch (_: Throwable) { /* already gone */ } }
+            installReceiver = null
+            installReceiverRegistered = false
         }
+    }
+
+    /**
+     * [forced] = an operator pressed "force update" on this specific device, rather than the
+     * 30-minute timer firing. A forced run differs in three ways, all because a human aimed it at
+     * one panel and is watching:
+     *   - it ignores the backoff cap (the budget is handed back, so a parked device retries NOW),
+     *   - it overrides the MDM stand-down (a targeted human action outranks a blanket default),
+     *   - it REPORTS what happened, including the nothing-to-do cases.
+     * That last one is the point. The dashboard toast only ever confirmed the command reached the
+     * socket; every reason the device might then do nothing returned silently, so a capped or
+     * managed panel looked identical to a working one.
+     */
+    fun checkForUpdate(forced: Boolean = false) {
+        if (config.serverUrl.isEmpty()) return
 
         Thread {
             try {
@@ -146,10 +183,17 @@ class UpdateChecker(private val context: Context) {
                 val updateAvailable = json.optBoolean("update_available", false)
                 val latestVersion = json.optString("latest_version", currentVersion)
                 val downloadUrl = json.optString("download_url", "")
+                // #166 escape hatch: the operator set OTA_ALLOW_MANAGED_DEVICES, so self-update is
+                // permitted even under a foreign DPC. Defaults FALSE, which is also what an older
+                // server (that never sends the field) yields — absence must never read as consent.
+                val allowManaged = json.optBoolean("allow_managed", false)
 
                 Log.i(TAG, "Current: $currentVersion, Latest: $latestVersion, Update: $updateAvailable")
 
                 if (!updateAvailable) {
+                    // A forced check that finds nothing must SAY nothing-to-do. Silence here is
+                    // what made the button look broken when it was working correctly.
+                    if (forced) report("info", "Force update: already on the latest version ($currentVersion)")
                     // #139: on the latest version now. If OTA state was pending, the install
                     // landed (the app relaunched as the new version) — clear state + caches once.
                     if (OtaThrottle.shouldClearOnUpToDate(otaState())) {
@@ -159,7 +203,44 @@ class UpdateChecker(private val context: Context) {
                         announceOtaStatus() // transition -> emits 'none' so the badge clears promptly
                     }
                 } else if (downloadUrl.isNotEmpty()) {
-                    maybeUpdate(latestVersion, "${config.serverUrl}$downloadUrl")
+                    // #155/#161: if a foreign DPC genuinely OWNS this panel, IT owns updates. Stand
+                    // down — never self-install: on a managed device the confirm dialog can't be
+                    // reliably auto-dismissed and ends up over customer content. The MDM pushes the
+                    // APK instead. Client-side safety net, independent of the server OTA switch.
+                    //
+                    // Checked HERE rather than before the request: standing down early meant a
+                    // stood-down panel never learned an update existed, so it reported ota_status
+                    // 'none' — indistinguishable from up to date — and no dashboard ever flagged it.
+                    //
+                    // A forced run overrides it: the operator is aiming at ONE device and can see
+                    // the screen, which is a stronger and better-targeted signal than the global
+                    // OTA_ALLOW_MANAGED_DEVICES switch.
+                    val managedNow = isManagedByForeignDeviceOwner()
+                    if (com.remotedisplay.player.admin.ManagedLogic.standDownFromSelfOta(
+                            managedNow, allowManaged || forced)) {
+                        val (managed, first) = OtaThrottle.onManagedStandDown(
+                            otaState(), latestVersion, System.currentTimeMillis())
+                        persistOta(managed)
+                        Log.i(TAG, "Managed by a foreign DPC — self-OTA stands down; $latestVersion needs the MDM (or a human)")
+                        if (first) {
+                            report("warn", "Update $latestVersion available but this panel is managed by another device owner — self-install is disabled; push it from your MDM or update manually")
+                            announceOtaStatus() // transition -> 'manual_update_required' so the badge shows
+                        }
+                        return@Thread
+                    }
+                    if (managedNow) {
+                        // Loud on purpose: a safety default was overridden, and the confirm dialog
+                        // this may raise over customer content is the cost of that choice.
+                        val why = if (forced) "operator forced it" else "server allows managed self-update"
+                        Log.i(TAG, "Managed by a foreign DPC, but $why — proceeding")
+                        if (forced) report("warn", "Force update: this panel is managed by another device owner — installing anyway at your request; a confirm dialog may appear on screen")
+                    }
+                    if (forced) {
+                        // Hand the attempt budget back so a device parked in backoff acts NOW
+                        // instead of waiting out the window.
+                        persistOta(OtaThrottle.onForcedCheck(otaState()))
+                    }
+                    maybeUpdate(latestVersion, "${config.serverUrl}$downloadUrl", forced)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Update check error: ${e.message}")
@@ -181,7 +262,7 @@ class UpdateChecker(private val context: Context) {
     // that can't silently install (Fire TV: no device-owner) stops re-pulling the full APK every
     // cycle. Only a COMMITTED install consumes the attempt budget — a transient download/verify
     // failure on a HEALTHY device must never park it in backoff.
-    private fun maybeUpdate(latestVersion: String, downloadUrl: String) {
+    private fun maybeUpdate(latestVersion: String, downloadUrl: String, forced: Boolean = false) {
         val now = System.currentTimeMillis()
         val cur = otaState()
         if (OtaThrottle.isNewTarget(cur, latestVersion)) cleanupApks(latestVersion)
@@ -191,19 +272,36 @@ class UpdateChecker(private val context: Context) {
         // Capped + still inside the window: do nothing AND stay silent. Fire OS restarts re-fire
         // this check constantly; reporting here would just move the flood onto the WS channel.
         // The enter-backoff line was already sent once on the crossing (below).
-        if (action == OtaThrottle.Action.BACKOFF) return
+        if (action == OtaThrottle.Action.BACKOFF) {
+            // Can only be reached unforced: a forced run hands the budget back before calling in.
+            if (forced) report("warn", "Force update: still backing off on $latestVersion — this should not happen, please report it")
+            return
+        }
 
         // download/verify failure → retry on the normal cadence; do NOT count it as an attempt.
         if (!downloadAndInstall(downloadUrl, latestVersion)) {
             Log.w(TAG, "Update $latestVersion: download/verify failed — retry next check (no attempt consumed)")
+            // Unforced this is deliberately quiet (transient network blips are not news). Forced,
+            // somebody is waiting on an answer, and "the APK would not download or did not match
+            // our signing key" is the single most useful thing we can tell them.
+            if (forced) report("error", "Force update: $latestVersion not installed — ${lastFailure ?: "reason unavailable"}")
             return
         }
 
         val (afterLaunch, enteredBackoff) = OtaThrottle.onInstallLaunched(afterCheck, now)
         persistOta(afterLaunch)
         Log.i(TAG, "Install launched for $latestVersion (attempt ${afterLaunch.attempts}/${OtaThrottle.MAX_INSTALL_ATTEMPTS})")
+        if (forced) {
+            // The APK is verified and the installer is launched — but off device-owner Android
+            // raises a confirm dialog, and "launched" is NOT "installed". Say which one happened,
+            // because the gap between them is exactly where force-update appears to do nothing.
+            report("info", if (canInstallSilently())
+                "Force update: installing $latestVersion silently"
+            else
+                "Force update: $latestVersion downloaded and verified, install launched — a confirm dialog must be accepted on the device unless an accessibility service does it")
+        }
         if (enteredBackoff) {
-            report("warn", "Update $latestVersion available but not installing after ${afterLaunch.attempts} attempts — manual update required (backing off to one retry per ${OtaThrottle.BACKOFF_MS / 3_600_000L}h)")
+            report("warn", "Update $latestVersion downloaded and verified, but ${afterLaunch.attempts} install attempts have not completed — a human needs to accept the install prompt on this device (or the MDM needs to delegate install permission). Still retrying.")
             announceOtaStatus() // transition -> emits 'manual_update_required'
         }
     }
@@ -225,15 +323,99 @@ class UpdateChecker(private val context: Context) {
     // Returns TRUE only when a verified APK is in hand and an install has been launched (the
     // caller may then count an attempt); FALSE on any download/verify failure — the caller must
     // NOT count those, so a transient network problem can't burn a healthy device's budget. #139
+    /*
+     * Where a downloaded APK is staged.
+     *
+     * getExternalFilesDir() returns NULL whenever external storage is not mounted/available — and
+     * on a signage panel that is not exotic: no emulated volume, a vendor ROM that never mounts one,
+     * an SD card ejected, storage still unmounted early in boot.
+     *
+     * The bug this replaces: `File(context.getExternalFilesDir(...), name)`. Java's File(File,String)
+     * treats a NULL parent as "no parent" and silently produces a RELATIVE path, so the download
+     * targeted `ScreenTinker-x.y.z.apk` in the process working directory — `/` — which is not
+     * writable. The write threw, the generic catch swallowed it, and the caller reported only
+     * "failed to download or failed signature verification". Nothing was ever written, so there was
+     * no partial file to find and nothing in the message pointed at storage. It fails on EVERY
+     * attempt, forever, on an affected panel — and identically for the pushed-APK path, which had
+     * the same line.
+     *
+     * Internal storage always exists, so fall back to it. It costs nothing when external is present.
+     * NOTE: the intent-based install fallback resolves this file through FileProvider, so
+     * res/xml/file_paths.xml must expose this directory too — see the <files-path> entry there.
+     */
+    /*
+     * Where to stage a downloaded APK — the FIRST location that actually accepts bytes.
+     *
+     * Internal app storage is tried first and is effectively guaranteed: /data/data/<pkg>/files is
+     * this app's own private directory, always mounted, always writable. If it is not, the app is
+     * not running. External storage is only a convenience (it survives uninstall and is visible for
+     * a manual install), and it is the one that fails — it can be absent, unmounted, present but
+     * unwritable, or report canWrite() = true and then refuse the write anyway.
+     *
+     * ⚠️ Each candidate is PROVEN with a real write, not asked. The previous version asked
+     * canWrite(), believed the answer, and then died at outputStream() — before a single byte — so
+     * the update failed instantly and reported it as a download problem. Every fallback in the world
+     * is useless if the first choice is trusted rather than tested.
+     *
+     * Returns the directory, or null with every reason it could not find one, so the operator gets
+     * the full picture instead of the first excuse.
+     */
+    private fun apkStagingDir(needBytes: Long): Pair<File?, String> {
+        val candidates = LinkedHashMap<String, File>()
+        candidates["internal"] = File(context.filesDir, "Download")
+        context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)?.let { candidates["external"] = it }
+        candidates["cache"] = File(context.cacheDir, "Download")
+        candidates["files"] = context.filesDir          // last resort: no subdirectory to create
+
+        val reasons = StringBuilder()
+        for ((name, dir) in candidates) {
+            val problem = apkDirProblem(dir, needBytes)
+            if (problem == null) {
+                if (name != "internal") Log.w(TAG, "Staging APK in $name (${dir.absolutePath})")
+                return dir to name
+            }
+            if (reasons.isNotEmpty()) reasons.append("; ")
+            reasons.append("$name ${problem}")
+        }
+        return null to reasons.toString()
+    }
+
+    private fun apkDirProblem(dir: File, needBytes: Long): String? {
+        if (!dir.exists() && !dir.mkdirs()) return "cannot create ${dir.absolutePath}"
+        if (!dir.isDirectory) return "${dir.absolutePath} is not a directory"
+        if (!dir.canWrite()) return "no write permission on ${dir.absolutePath}"
+        val free = try { dir.usableSpace } catch (_: Throwable) { -1L }
+        // Headroom, not an exact fit: the installer stages its own copy of the APK as well, so a
+        // volume with barely the download's worth free still fails at install time.
+        if (needBytes > 0 && free in 0 until (needBytes * 2)) {
+            return "only ${free / 1024 / 1024}MB free on ${dir.absolutePath}, need ~${needBytes * 2 / 1024 / 1024}MB"
+        }
+        // Prove it rather than infer it: canWrite() can be true on a volume that refuses the write.
+        return try {
+            val probe = File(dir, ".st-write-probe")
+            probe.writeBytes(byteArrayOf(1))
+            probe.delete()
+            null
+        } catch (e: Throwable) {
+            "write test failed in ${dir.absolutePath}: ${e.javaClass.simpleName} ${e.message}"
+        }
+    }
+
     private fun downloadAndInstall(url: String, version: String): Boolean {
         try {
-            val apkFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
-                "ScreenTinker-$version.apk")
+            // Find somewhere that will actually take the file, before asking the network for it.
+            val (dir, whereOrWhy) = apkStagingDir(9L * 1024 * 1024)
+            if (dir == null) {
+                lastFailure = "nowhere to stage the update — $whereOrWhy"
+                Log.e(TAG, "APK staging unavailable: $whereOrWhy")
+                return false
+            }
+            val apkFile = File(dir, "ScreenTinker-$version.apk")
 
             // #139: reuse a previously-downloaded, verified APK for this version instead of
             // re-pulling ~8.7 MB every cycle. The file also stays on disk as the artifact for a
             // manual install when silent install isn't possible.
-            if (apkFile.exists() && verifyApkSignature(apkFile)) {
+            if (apkFile.exists() && cachedApkIs(apkFile, version) && verifyApkSignature(apkFile)) {
                 Log.i(TAG, "Reusing cached verified APK: ${apkFile.absolutePath} (${apkFile.length()} bytes)")
                 handler.post { installApk(apkFile) }
                 return true
@@ -246,6 +428,7 @@ class UpdateChecker(private val context: Context) {
             val response = client.newCall(request).execute()
 
             if (!response.isSuccessful) {
+                lastFailure = "server returned HTTP ${response.code} for the APK"
                 Log.e(TAG, "Download failed: ${response.code}")
                 return false
             }
@@ -265,7 +448,21 @@ class UpdateChecker(private val context: Context) {
             // Verify the downloaded APK is our package AND signed by the same key as
             // the currently-installed app before installing. An attacker can't forge
             // our signature, so this holds even over an untrusted transport.
+            // The server advertises a version and separately serves a file; the two can drift. A
+            // stale APK behind a current version number installs as a NO-OP, so the version never
+            // changes, the update is attempted again, and the panel loops until its attempts are
+            // spent — reporting a download failure, which it is not. Say what actually happened.
+            if (!cachedApkIs(apkFile, version)) {
+                val got = apkVersionName(apkFile) ?: "unreadable"
+                lastFailure = "server served $got but advertised $version — the update on the server is stale"
+                Log.e(TAG, "Version mismatch: advertised $version, downloaded $got")
+                apkFile.delete()
+                return false
+            }
             if (!verifyApkSignature(apkFile)) {
+                // lastFailure was set precisely inside verifyApkSignature; keep it, and add the
+                // size so a truncated download is distinguishable from a genuine cert mismatch.
+                lastFailure = "${lastFailure ?: "signature verification failed"} (downloaded ${apkFile.length()} bytes)"
                 Log.e(TAG, "Refusing update: APK signature/package verification failed (tampered or MITM'd APK)")
                 apkFile.delete()
                 return false
@@ -278,6 +475,7 @@ class UpdateChecker(private val context: Context) {
             }
             return true
         } catch (e: Exception) {
+            lastFailure = "download/install threw ${e.javaClass.simpleName}: ${e.message}"
             Log.e(TAG, "Download/install error: ${e.message}")
             return false
         }
@@ -292,7 +490,9 @@ class UpdateChecker(private val context: Context) {
             try {
                 val base = url.substringAfterLast('/').substringBefore('?').ifBlank { "app.apk" }
                 val fileName = "pushed-" + (if (base.endsWith(".apk")) base else "$base.apk")
-                val apkFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), fileName)
+                val (dir, whyNot) = apkStagingDir(9L * 1024 * 1024)
+                if (dir == null) { Log.e(TAG, "installFromUrl: nowhere to stage — $whyNot"); return@Thread }
+                val apkFile = File(dir, fileName)
                 if (apkFile.exists()) apkFile.delete()
                 val response = client.newCall(Request.Builder().url(url).build()).execute()
                 if (!response.isSuccessful) { Log.e(TAG, "installFromUrl: download failed ${response.code}"); return@Thread }
@@ -340,6 +540,17 @@ class UpdateChecker(private val context: Context) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 val installer = context.packageManager.packageInstaller
+                // Abandon our own leftover sessions first. Every attempt stages a FULL copy of the
+                // APK (~8.7MB) via openWrite, and a session whose confirm dialog is never accepted
+                // just sits there holding it. At three attempts that was a rounding error; at forty
+                // it would be ~350MB of staged installs on a panel nobody walks up to, on hardware
+                // that does not have it spare. Also keeps us clear of the per-app session limit,
+                // which would start throwing once enough accumulated.
+                try {
+                    for (s in installer.mySessions) {
+                        try { installer.abandonSession(s.sessionId) } catch (_: Throwable) { /* already gone */ }
+                    }
+                } catch (e: Throwable) { Log.w(TAG, "Session cleanup skipped: ${e.message}") }
                 val params = android.content.pm.PackageInstaller.SessionParams(
                     android.content.pm.PackageInstaller.SessionParams.MODE_FULL_INSTALL
                 )
@@ -385,6 +596,52 @@ class UpdateChecker(private val context: Context) {
 
     // True only if the downloaded APK is this same package and shares a signing
     // certificate with the installed app. Fail-closed on any error.
+    /* The versionName inside an APK file, or null if it cannot be read. */
+    private fun apkVersionName(apkFile: File): String? = try {
+        context.packageManager.getPackageArchiveInfo(apkFile.absolutePath, 0)?.versionName
+    } catch (e: Throwable) {
+        Log.w(TAG, "Could not read version from ${apkFile.name}: ${e.message}")
+        null
+    }
+
+    /*
+     * Is this file actually the version we mean to install?
+     *
+     * The cache is keyed by FILENAME, and the filename is built from the version the server
+     * advertised — so a file called ScreenTinker-1.9.34.apk containing 1.9.33 passes a signature
+     * check (same key), gets reused on every attempt, and installs as a no-op forever. Fixing the
+     * server does not clear it; only deleting the file does. Checking the version inside makes that
+     * self-healing instead of needing a hand on the device.
+     */
+    private fun cachedApkIs(apkFile: File, version: String): Boolean {
+        val got = apkVersionName(apkFile) ?: return false
+        if (got == version) return true
+        Log.w(TAG, "Cached ${apkFile.name} contains $got, expected $version — discarding")
+        return false
+    }
+
+    /*
+     * Delete every staged APK. The escape hatch for a panel holding a bad download: it forces the
+     * next check to fetch again rather than reuse. Safe at any time — these are only ever caches,
+     * re-fetched on demand.
+     */
+    fun clearUpdateCache(): Int {
+        var n = 0
+        for (dir in listOfNotNull(
+            File(context.filesDir, "Download"),
+            context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
+            File(context.cacheDir, "Download"),
+        )) {
+            val files = try { dir.listFiles() } catch (_: Throwable) { null } ?: continue
+            for (f in files) {
+                if (!f.name.endsWith(".apk")) continue
+                if (f.delete()) n++
+            }
+        }
+        report("info", "Update cache cleared ($n file(s)) — the next check will download afresh")
+        return n
+    }
+
     private fun verifyApkSignature(apkFile: File): Boolean {
         return try {
             val pm = context.packageManager
@@ -401,10 +658,12 @@ class UpdateChecker(private val context: Context) {
                 PackageManager.GET_SIGNING_CERTIFICATES else @Suppress("DEPRECATION") PackageManager.GET_SIGNATURES
             val downloaded = pm.getPackageArchiveInfo(apkFile.absolutePath, archiveFlags)
             if (downloaded == null) {
+                lastFailure = "the downloaded file could not be parsed as an APK (truncated or not an APK)"
                 Log.e(TAG, "Could not parse downloaded APK")
                 return false
             }
             if (downloaded.packageName != context.packageName) {
+                lastFailure = "APK is package ${downloaded.packageName}, expected ${context.packageName}"
                 Log.e(TAG, "APK package mismatch: ${downloaded.packageName} != ${context.packageName}")
                 return false
             }
@@ -414,18 +673,37 @@ class UpdateChecker(private val context: Context) {
             val installedFlags = if (installedUsesSigningInfo)
                 PackageManager.GET_SIGNING_CERTIFICATES else @Suppress("DEPRECATION") PackageManager.GET_SIGNATURES
             val installed = pm.getPackageInfo(context.packageName, installedFlags)
-            val downloadedSigs = signingCertHashes(downloaded, archiveUsesSigningInfo)
+            var downloadedSigs = signingCertHashes(downloaded, archiveUsesSigningInfo)
+            // #139 follow-up: on API 28/29 the archive read goes through the legacy GET_SIGNATURES
+            // path, and if PackageManager hands back nothing we previously refused a perfectly good
+            // APK with no way to tell that apart from a real mismatch. Read the v1 signature
+            // ourselves before giving up — JarFile is random-access, which is how the JAR signature
+            // is meant to be read, and it verifies the same bytes PackageManager would have.
+            // This does NOT weaken the check: the cert extracted here is still compared against the
+            // installed app's below, and an unsigned or differently-signed APK still fails.
+            if (downloadedSigs.isEmpty()) {
+                val viaJar = archiveCertsViaJar(apkFile)
+                if (viaJar.isNotEmpty()) {
+                    Log.w(TAG, "Archive certs unreadable via PackageManager on API ${Build.VERSION.SDK_INT}; used JarFile (${viaJar.size})")
+                    downloadedSigs = viaJar
+                }
+            }
             val installedSigs = signingCertHashes(installed, installedUsesSigningInfo)
             if (downloadedSigs.isEmpty() || installedSigs.isEmpty()) {
+                lastFailure = "could not read signing certificates (archive=${downloadedSigs.size}, installed=${installedSigs.size}) on API ${Build.VERSION.SDK_INT}"
                 Log.e(TAG, "Missing signing certificates (downloaded=${downloadedSigs.size}, installed=${installedSigs.size})")
                 return false
             }
             // Require a non-empty overlap of signer certs (handles multi-signer / cert-rotation
             // the same way the API>=30 path does: compare the full current signer sets).
             val match = downloadedSigs.any { it in installedSigs }
-            if (!match) Log.e(TAG, "APK signing certificate does not match installed app")
+            if (!match) {
+                lastFailure = "APK is signed by a different key than the installed app"
+                Log.e(TAG, "APK signing certificate does not match installed app")
+            }
             match
         } catch (e: Exception) {
+            lastFailure = "signature check threw ${e.javaClass.simpleName}: ${e.message}"
             Log.e(TAG, "Signature verification error: ${e.message}", e)
             false
         }
@@ -436,6 +714,31 @@ class UpdateChecker(private val context: Context) {
     // multi-signer + rotation aware), GET_SIGNATURES -> legacy .signatures (the only field
     // populated for ARCHIVE reads on API 28/29). Both yield the same cert for a normally-signed
     // APK; the caller compares as sets so an overlapping signer still verifies.
+    /*
+     * Read the APK's v1 (JAR) signer certificates directly, as a fallback for the API 28/29 archive
+     * read. Opening JarFile with verify=true and reading an entry to completion is what populates
+     * JarEntry.certificates — the certificate is only known once the bytes it covers have been
+     * checked, so the read is the verification, not a step before it.
+     *
+     * Returns an empty set on any problem, which leaves the caller refusing the install: this is a
+     * fallback for "PackageManager told us nothing", never a way to skip the comparison.
+     */
+    private fun archiveCertsViaJar(apkFile: File): Set<String> {
+        return try {
+            java.util.jar.JarFile(apkFile, true).use { jar ->
+                val entry = jar.getJarEntry("AndroidManifest.xml") ?: return emptySet()
+                jar.getInputStream(entry).use { input ->
+                    val buf = ByteArray(8192)
+                    while (input.read(buf) != -1) { /* must read fully before certificates populate */ }
+                }
+                entry.certificates?.mapNotNull { sha256(it.encoded) }?.toSet() ?: emptySet()
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "JarFile cert read failed: ${e.message}")
+            emptySet()
+        }
+    }
+
     private fun signingCertHashes(info: PackageInfo, useSigningInfo: Boolean): Set<String> {
         val sigs: Array<Signature>? = if (useSigningInfo) {
             info.signingInfo?.apkContentsSigners
@@ -465,4 +768,8 @@ class UpdateChecker(private val context: Context) {
     // now lives in STPolicy.hasForeignDeviceOwner() (same public getActiveAdmins() signal, errs safe).
     private fun isManagedByForeignDeviceOwner(): Boolean =
         com.remotedisplay.player.admin.STPolicy(context).hasForeignDeviceOwner()
+
+    /** Device owner, or an MDM delegated install scope to us — i.e. no confirm dialog. */
+    private fun canInstallSilently(): Boolean =
+        try { com.remotedisplay.player.admin.STPolicy(context).canInstallSilently() } catch (_: Throwable) { false }
 }

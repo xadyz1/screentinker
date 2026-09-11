@@ -13,6 +13,16 @@
   var events = (q.get('events') || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
   if (!events.length) events = DEFAULT_EVENTS.slice();
 
+  // How far the auto-framing is ever allowed to pull back, expressed in county-widths from
+  // the configured centre. Without this, a warning several counties away drags the frame
+  // out to cover it and your own area shrinks to nothing — the map ends up showing half a
+  // state at a zoom where local weather is unreadable. 2 counties in every direction keeps
+  // "where I am" recognisable while still catching storms about to arrive.
+  var maxCounties = parseFloat(q.get('maxcounties'));
+  if (!isFinite(maxCounties) || maxCounties <= 0) maxCounties = 2;
+  var COUNTY_DEG = 0.35;                       // ~24 mi, a typical US county
+  var MIN_HALF_LAT = 0.18;                     // ~12 mi; a floor so one small cell can't over-zoom
+
   var EVENT_COLORS = {
     'Tornado Warning': '#FF2D2D',
     'Severe Thunderstorm Warning': '#FFD12E',
@@ -22,9 +32,71 @@
   var DEFAULT_COLOR = '#FF8A1F';
   function colorFor(ev) { return EVENT_COLORS[ev] || DEFAULT_COLOR; }
 
+  // Decide the frame for a set of warning polygons.
+  //
+  // The map NEVER PANS. Signage is watched at a glance from across a room, and a view that
+  // slides to wherever the weather is stops being "my area" — you lose the landmarks you
+  // orient by. So the centre is pinned to the configured point and only the ZOOM responds:
+  // the box we hand to fitBounds is always symmetric about home.
+  //
+  // Returns null to mean "nothing worth reframing for — hold the configured view", which is
+  // the case both when there are no warnings and when they are all outside the home frame.
+  function frameFor(b) {
+    if (!b || !b.isValid || !b.isValid()) return null;
+    if (!homeFrame.intersects(b)) return null;      // a storm three counties over is not chased
+    // How far from home the warning actually reaches, capped at the home frame. Taking the
+    // max of the two sides is what keeps the box symmetric, and therefore centred.
+    var halfLat = Math.min(Math.max(Math.abs(b.getNorth() - lat), Math.abs(lat - b.getSouth())), padLat);
+    var halfLon = Math.min(Math.max(Math.abs(b.getEast() - lon), Math.abs(lon - b.getWest())), padLon);
+    // Floor it so a single small cell overhead doesn't slam the map to street level.
+    halfLat = Math.max(halfLat, MIN_HALF_LAT);
+    halfLon = Math.max(halfLon, MIN_HALF_LAT / Math.max(0.2, Math.cos(lat * Math.PI / 180)));
+    return L.latLngBounds([lat - halfLat, lon - halfLon], [lat + halfLat, lon + halfLon]);
+  }
+
+  // Bounds of a GeoJSON warning polygon, computed straight off the coordinates. Cheaper
+  // than building a throwaway L.geoJSON layer per feature just to ask for its extent.
+  function boundsOf(f) {
+    var g = f && f.geometry; if (!g) return null;
+    var polys = g.type === 'Polygon' ? [g.coordinates] : g.coordinates;
+    var s = 90, w = 180, n = -90, e = -180;
+    polys.forEach(function (poly) {
+      poly.forEach(function (ring) {
+        ring.forEach(function (pt) {
+          var x = pt[0], y = pt[1];
+          if (y < s) s = y; if (y > n) n = y;
+          if (x < w) w = x; if (x > e) e = x;
+        });
+      });
+    });
+    return (n >= s && e >= w) ? L.latLngBounds([s, w], [n, e]) : null;
+  }
+
+  // The chips claim to describe what is "in view", so they have to be tallied from the
+  // map's ACTUAL viewport, not from the query result. The alert feed is fetched per STATE
+  // (one request instead of one per county), so it routinely returns warnings hundreds of
+  // miles away — reporting those as "2x Tornado Warning" over a map that shows neither of
+  // them is worse than saying nothing.
+  function visibleCounts() {
+    var view = map.getBounds(), counts = {};
+    drawn.forEach(function (f) {
+      if (!f.__b || !f.__b.intersects(view)) return;
+      var ev = (f.properties || {}).event;
+      counts[ev] = (counts[ev] || 0) + 1;
+    });
+    return counts;
+  }
+  function refreshChips() { renderChips(visibleCounts()); }
+
   document.getElementById('area').textContent = area;
 
   var map = L.map('map', { zoomControl: false, attributionControl: true, fadeAnimation: false }).setView([lat, lon], zoom);
+
+  // The widest frame the auto-fit may ever produce. Longitude degrees shrink toward the
+  // poles, so scale them by cos(lat) to keep the box square-ish on the ground.
+  var padLat = COUNTY_DEG * maxCounties;
+  var padLon = padLat / Math.max(0.2, Math.cos(lat * Math.PI / 180));
+  var homeFrame = L.latLngBounds([lat - padLat, lon - padLon], [lat + padLat, lon + padLon]);
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', {
     subdomains: 'abcd', maxZoom: 19,
     attribution: '&copy; OpenStreetMap &copy; CARTO · Radar: RainViewer · Alerts: NWS/NOAA',
@@ -81,6 +153,7 @@
 
   // ---- live NWS warning polygons ----------------------------------------------------
   var warnLayer = null;
+  var drawn = [];        // features actually on the map, each stamped with __b bounds
   var chipsEl = document.getElementById('chips');
 
   function shortHeadline(h) { h = h || ''; return h.length > 90 ? h.slice(0, 87) + '…' : h; }
@@ -115,7 +188,10 @@
     Promise.allSettled(alertUrls().map(function (u) {
       return fetch(u, { headers: { Accept: 'application/geo+json' } }).then(function (r) { return r.json(); });
     })).then(function (results) {
-      var seen = {}, feats = [], counts = {};
+      // Slightly larger than homeFrame: fitBounds padding can push the viewport a hair
+      // past it, and a polygon popping in blank at the edge looks like a bug.
+      var reachable = homeFrame.pad(0.3);
+      var seen = {}, feats = [];
       results.forEach(function (res) {
         if (res.status !== 'fulfilled' || !res.value || !res.value.features) return;
         res.value.features.forEach(function (f) {
@@ -124,10 +200,15 @@
           if (events.indexOf(p.event) === -1) return;
           var id = p.id || (f.id || JSON.stringify(g).slice(0, 40));
           if (seen[id]) return; seen[id] = 1;
+          // The map can never travel outside homeFrame, so a warning that misses it is not
+          // merely off-screen now — it is unreachable. Don't draw it and don't count it.
+          var b = boundsOf(f);
+          if (!b || !b.intersects(reachable)) return;
+          f.__b = b;
           feats.push(f);
-          counts[p.event] = (counts[p.event] || 0) + 1;
         });
       });
+      drawn = feats;
       if (warnLayer) { map.removeLayer(warnLayer); warnLayer = null; }
       if (feats.length) {
         warnLayer = L.geoJSON({ type: 'FeatureCollection', features: feats }, {
@@ -146,14 +227,29 @@
         var fitKey = feats.map(function (f) { return (f.properties || {}).id; }).sort().join('|');
         if (fitKey !== loadWarnings._fitKey) {
           loadWarnings._fitKey = fitKey;
-          try { map.fitBounds(warnLayer.getBounds(), { padding: [70, 70], maxZoom: 9 }); } catch (e) {}
+          // Padding is small on purpose: the frame is already the answer, and 70px of inset
+          // on a PiP-sized overlay throws away a third of the width on each side.
+          try {
+            var frame = frameFor(warnLayer.getBounds());
+            if (frame) map.fitBounds(frame, { padding: [24, 24], maxZoom: 9 });
+            else map.setView([lat, lon], zoom);
+          } catch (e) {}
         }
       } else {
+        // Warnings cleared: go back to the configured view instead of staying parked on
+        // wherever the last storm happened to be.
+        if (loadWarnings._fitKey) map.setView([lat, lon], zoom);
         loadWarnings._fitKey = null;
       }
-      renderChips(counts);
+      // After framing, not before: fitBounds/setView change what "in view" means, and
+      // moveend fires once the view settles.
+      refreshChips();
     }).catch(function (e) { if (window.console) console.warn('warnings load failed', e && e.message); });
   }
+
+  // The zoom set by framing decides what "in view" means, and fitBounds settles
+  // asynchronously — so retally once the map stops moving rather than guessing.
+  map.on('moveend zoomend', refreshChips);
 
   // ---- go ---------------------------------------------------------------------------
   loadRadar();

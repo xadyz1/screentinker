@@ -2,11 +2,15 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');
+const { clearInheritedCopy } = require('../lib/resolve-device-playlist');
 // Phase 2.2l: workspace-aware access. Drops the previous listVisibleWalls /
 // userCanAccessWall helpers - the admin/team_members branches there were
 // dead code after the Phase 2.1 role rename (no users carry role='admin'
 // anymore; team_members is a vestigial table from the pre-workspace model).
 const { accessContext } = require('../lib/tenancy');
+// #236: per-panel mounting rotation. Normalised on the way IN as well as out, so a bad value from a
+// scripted API caller is rejected at the door instead of persisting and confusing every later read.
+const { normalizeWallRotation } = require('../lib/wall-geometry');
 
 // Load a wall + access context. Returns the wall row or null after sending
 // 403/404. requireWrite=true also denies workspace_viewer.
@@ -174,14 +178,14 @@ router.put('/:id', requireWallWrite, (req, res) => {
     db.prepare(`UPDATE video_walls SET ${updates.join(', ')} WHERE id = ?`).run(...values);
   }
 
-  // If playlist changed, propagate to every member device's playlist_id so the
-  // existing buildPlaylistPayload picks up the right items.
-  if (req.body.playlist_id !== undefined) {
-    const members = db.prepare('SELECT device_id FROM video_wall_devices WHERE wall_id = ?').all(req.params.id);
-    const stmt = db.prepare('UPDATE devices SET playlist_id = ? WHERE id = ?');
-    for (const m of members) stmt.run(req.body.playlist_id || null, m.device_id);
-  }
-
+  /*
+   * ⚠️ The wall's playlist is no longer propagated onto its members.
+   *
+   * video_walls.playlist_id plus devices.wall_id is already the whole statement; the resolver reads
+   * it. Copying it down is what made a wall edit overwrite whatever an operator had set for an
+   * individual panel, with nothing in the row left to say it had been a choice. pushToWallMembers
+   * below still runs — what they RESOLVE to has changed even though no device row did.
+   */
   pushToWallMembers(req, req.params.id);
   notifyDashboards(req, req.wall.workspace_id);
   res.json(loadWallWithDevices(req.params.id));
@@ -193,7 +197,9 @@ router.delete('/:id', requireWallWrite, (req, res) => {
   const wallWorkspaceId = req.wall.workspace_id; // capture before the DELETE
   const members = db.prepare('SELECT device_id FROM video_wall_devices WHERE wall_id = ?').all(req.params.id);
   const tx = db.transaction(() => {
-    db.prepare("UPDATE devices SET wall_id = NULL, playlist_id = NULL WHERE wall_id = ?").run(req.params.id);
+    // Leaving the wall clears the INHERITED copy but never a device's own choice — see
+    // clearInheritedCopy. wall_id going NULL is what actually ends the inheritance.
+    db.prepare("UPDATE devices SET wall_id = NULL, playlist_id = CASE WHEN playlist_source = 'device' THEN playlist_id ELSE NULL END WHERE wall_id = ?").run(req.params.id);
     db.prepare('DELETE FROM video_walls WHERE id = ?').run(req.params.id);
   });
   tx();
@@ -236,26 +242,26 @@ router.put('/:id/devices', requireWallWrite, (req, res) => {
     db.prepare('DELETE FROM video_wall_devices WHERE wall_id = ?').run(req.params.id);
     db.prepare("UPDATE devices SET wall_id = NULL WHERE wall_id = ?").run(req.params.id);
 
-    // Removed devices: clear playlist (they're returning to ungrouped state).
-    for (const id of removedIds) {
-      db.prepare("UPDATE devices SET playlist_id = NULL WHERE id = ?").run(id);
-    }
+    // Removed devices return to ungrouped. Only the inherited copy goes; a panel that had been
+    // given its own playlist keeps it, which the old unconditional NULL destroyed.
+    for (const id of removedIds) clearInheritedCopy(id);
 
     const insertPos = db.prepare(`
       INSERT INTO video_wall_devices
         (wall_id, device_id, grid_col, grid_row, rotation, canvas_x, canvas_y, canvas_width, canvas_height)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    const updateDevice = db.prepare("UPDATE devices SET wall_id = ?, playlist_id = ? WHERE id = ?");
+    // Joining a wall sets wall_id and nothing else: membership IS the assignment.
+    const updateDevice = db.prepare("UPDATE devices SET wall_id = ? WHERE id = ?");
 
     for (const d of devices) {
       insertPos.run(
         req.params.id, d.device_id,
-        d.grid_col, d.grid_row, d.rotation || 0,
+        d.grid_col, d.grid_row, normalizeWallRotation(d.rotation),
         d.canvas_x ?? null, d.canvas_y ?? null,
         d.canvas_width ?? null, d.canvas_height ?? null,
       );
-      updateDevice.run(req.params.id, wall.playlist_id || null, d.device_id);
+      updateDevice.run(req.params.id, d.device_id);
       // A device joining a wall leaves all of its groups (walls and groups
       // are mutually exclusive concepts in this UX).
       db.prepare('DELETE FROM device_group_members WHERE device_id = ?').run(d.device_id);
@@ -316,7 +322,7 @@ router.get('/:id/device-config/:deviceId', requireWallRead, (req, res) => {
     grid_rows: wall.grid_rows,
     grid_col: position.grid_col,
     grid_row: position.grid_row,
-    rotation: position.rotation,
+    rotation: normalizeWallRotation(position.rotation),
     bezel_h_px: wall.bezel_h_mm,
     bezel_v_px: wall.bezel_v_mm,
     sync_mode: wall.sync_mode,

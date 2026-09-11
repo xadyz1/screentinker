@@ -1,5 +1,6 @@
 const { db } = require('../db/database');
 const { _localParts } = require('../lib/schedule-eval');
+const playerCapabilities = require('../lib/player-capabilities');
 
 let io = null;
 
@@ -10,11 +11,14 @@ function startScheduler(socketIo) {
   console.log('Scheduler service started');
 }
 
-// Track which devices have a schedule override active so we can revert
-const activeOverrides = new Map(); // deviceId -> { playlist_id, layout_id }
+// No in-memory override state: a schedule's effect lives in devices.scheduled_playlist_id /
+// scheduled_layout_id, so it survives a restart and reverts by being cleared. The Map that used to
+// live here was the reason a restart mid-schedule stranded a device permanently.
 
-function evaluateSchedules() {
-  const deviceNs = io?.of('/device');
+// ioOverride lets a test drive one evaluation without startScheduler's 60s setInterval, which keeps
+// the process alive and turns the test run into a hang rather than a failure.
+function evaluateSchedules(ioOverride) {
+  const deviceNs = (ioOverride || io)?.of('/device');
   if (!deviceNs) return;
 
   const now = new Date();
@@ -41,28 +45,32 @@ function evaluateSchedules() {
     `).all(device.id, device.id);
 
     const active = schedules.find(s => isScheduleActiveNow(s, now, deviceTz(device)));
-    const override = activeOverrides.get(device.id);
-    let changed = false;
 
-    if (active) {
-      // Apply layout override if schedule has one
-      if (active.layout_id && active.layout_id !== device.layout_id) {
-        if (!override) activeOverrides.set(device.id, { layout_id: device.layout_id, playlist_id: device.playlist_id });
-        db.prepare("UPDATE devices SET layout_id = ? WHERE id = ?").run(active.layout_id, device.id);
-        changed = true;
-      }
-      // Apply playlist override if schedule has one
-      if (active.playlist_id && active.playlist_id !== device.playlist_id) {
-        if (!override) activeOverrides.set(device.id, { layout_id: device.layout_id, playlist_id: device.playlist_id });
-        db.prepare("UPDATE devices SET playlist_id = ? WHERE id = ?").run(active.playlist_id, device.id);
-        changed = true;
-      }
-    } else if (override) {
-      // No active schedule — revert to original playlist/layout
-      db.prepare("UPDATE devices SET playlist_id = ?, layout_id = ? WHERE id = ?")
-        .run(override.playlist_id, override.layout_id, device.id);
-      activeOverrides.delete(device.id);
-      changed = true;
+    /*
+     * ⚠️ A schedule writes its OWN columns and never touches devices.playlist_id or layout_id.
+     *
+     * This used to overwrite them and remember the previous values in an in-memory Map, which had
+     * two consequences. A server restart during an active schedule lost the Map, so the device was
+     * stranded on the scheduled playlist FOREVER — nothing on the row recorded that it had been
+     * temporary. And a schedule was indistinguishable from an operator's own choice, because both
+     * ended up as the same column.
+     *
+     * With dedicated columns, "revert" is not "restore what I memorised" — it is "clear the
+     * column", and the values a schedule used to clobber were never written over in the first
+     * place. That makes every tick idempotent and the whole thing self-healing across a restart:
+     * the next evaluation simply re-derives whether a schedule is active.
+     *
+     * Resolution order lives in the view (lib/playlist-resolver-sql.js), where scheduled_playlist_id
+     * sits ABOVE the device's own — a schedule is meant to win while it runs, and only while it runs.
+     */
+    const wantPlaylist = active?.playlist_id || null;
+    const wantLayout = active?.layout_id || null;
+    const changed = wantPlaylist !== (device.scheduled_playlist_id || null)
+      || wantLayout !== (device.scheduled_layout_id || null);
+
+    if (changed) {
+      db.prepare('UPDATE devices SET scheduled_playlist_id = ?, scheduled_layout_id = ? WHERE id = ?')
+        .run(wantPlaylist, wantLayout, device.id);
     }
 
     if (changed) pushPlaylistToDevice(device.id, deviceNs);
@@ -120,6 +128,11 @@ function rebootDue(schedule, tz, now, lastDate) {
 function maybeRebootDevice(device, now, deviceNs) {
   const { due, today } = rebootDue(effectiveRebootSchedule(device), deviceTz(device), now, device.reboot_last_date);
   if (!due) return;
+  // A nightly reboot can be scheduled on a group, and a group holds browser tabs. Sending it
+  // anyway was harmless in itself, but the log line below then claimed a reboot had fired every
+  // night for a display that cannot reboot — which is what someone reads when they are trying to
+  // work out why a panel never came back.
+  if (!playerCapabilities.supports(device, 'system.reboot')) return;
   db.prepare('UPDATE devices SET reboot_last_date = ? WHERE id = ?').run(today, device.id);
   deviceNs.to(device.id).emit('device:command', { type: 'reboot', payload: { scheduled: true } });
   console.log(`[reboot] scheduled reboot fired for device ${device.id} (${device.name || 'unnamed'}) at local ${today}`);
@@ -143,6 +156,18 @@ function isScheduleActiveNow(schedule, now, tz) {
 
   const rule = parseSimpleRRule(schedule.recurrence);
   if (!rule) return nowStamp >= startStamp && nowStamp <= endStamp;
+
+  // The DATE window. A recurring schedule was previously compared on weekday and HH:MM alone, with
+  // the date component dropped entirely — so it was live before its start date and, more visibly,
+  // carried on forever after its end date. A campaign set to finish on the 1st was still switching
+  // screens weeks later, while the calendar (which does read recurrence_end) showed it as stopped.
+  // The end date is offered on the form; it has to mean something.
+  const nowDate = nowStamp.slice(0, 10);
+  if (nowDate < startStamp.slice(0, 10)) return false;                  // has not begun yet
+  if (schedule.recurrence_end) {
+    // Inclusive: an end date of the 5th means the 5th still runs, to its normal end time.
+    if (nowDate > String(schedule.recurrence_end).slice(0, 10)) return false;
+  }
 
   // Day-of-week in the device's local zone.
   if (rule.byDay && !rule.byDay.includes(L.dow)) return false;
@@ -173,4 +198,10 @@ function pushPlaylistToDevice(deviceId, deviceNs) {
   commandQueue.queueOrEmitPlaylistUpdate(deviceNs, deviceId, buildPlaylistPayload);
 }
 
-module.exports = { startScheduler, pushPlaylistToDevice, rebootDue };
+// evaluateSchedules is exported for tests: it is the whole of the scheduler's effect on what a
+// screen plays, and the columns it writes are the difference between a revertible override and the
+// permanent stranding the in-memory Map used to cause. Untested, that distinction is a comment.
+module.exports = { startScheduler, pushPlaylistToDevice, rebootDue, evaluateSchedules };
+// Exported for testing: whether a schedule is live right now is the single decision this service
+// exists to make, and it should be checkable without a ticking timer.
+module.exports.isScheduleActiveNow = isScheduleActiveNow;

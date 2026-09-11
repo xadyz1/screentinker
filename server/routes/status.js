@@ -3,10 +3,14 @@ const router = express.Router();
 const { db } = require('../db/database');
 const os = require('os');
 const path = require('path');
+const { copyFileBytes } = require('../lib/fsutil'); // exFAT-safe; see lib/fsutil.js
 const fs = require('fs');
 const config = require('../config');
+const { sixDigitCode } = require('../lib/numeric-code');
 const VERSION = require('../version');
-const { PLATFORM_ROLES } = require('../middleware/auth');
+const { PLATFORM_ROLES, resolveSessionUser } = require('../middleware/auth');
+const { INLINE_SAFE_EXTS } = require('../lib/upload-sniff');
+const { digestFileSync, isDigestName } = require('../lib/content-digest');
 const loopLag = require('../services/loop-lag');
 // #146 P3.8: soak observability — internal limiter/maintenance states.
 const flapLimiter = require('../lib/flap-limiter');
@@ -14,8 +18,10 @@ const otaBreaker = require('../lib/ota-breaker');
 const otaDownloadGuard = require('../lib/ota-download-guard');
 const logCoalescer = require('../lib/log-coalescer');
 const { getMaintenanceStats } = require('../db/database');
+const { getCheckpointerState } = require('../db/wal-checkpointer');   // #240
 const heartbeat = require('../services/heartbeat');
 const appSettings = require('../lib/app-settings');
+const bootDefer = require('../lib/boot-defer');   // 2.0.1 first-boot player defer
 
 // Public status page
 router.get('/', (req, res) => {
@@ -34,7 +40,32 @@ router.get('/', (req, res) => {
     // (from the heartbeat connection map), NOT devices.status='online' (which lags by
     // the offline-timeout). The single most-glanced operational number; never gated.
     devices_connected: heartbeat.getConnectedCount(),
+    /*
+     * Can THIS process capture the screen? True only on a BrightSign whose Node context can load
+     * @brightsign/screenshot — i.e. a server-on-a-player, where the player's own widget has no
+     * `require` and therefore cannot capture itself.
+     *
+     * ⚠️ Reported because its ABSENCE is invisible otherwise. A capture request is accepted, does
+     * nothing, and leaves the previous screenshot in place: on a live XT245 that meant a ten-day-old
+     * frame while every request returned success. One boolean on the health endpoint is the
+     * difference between "screenshots are broken here" and an afternoon of guessing.
+     */
+    screen_capture: require('../lib/brightsign-capture').available(),
   };
+
+  /*
+   * 2.0.1 — WHY PLAYERS ARE BEING REFUSED, on the endpoint compose already polls.
+   *
+   * ⚠️ STILL 200, STILL `status: 'ok'`. The healthcheck in docker-compose.example.yml treats a
+   * non-2xx as unhealthy and restarts the container; failing it during scheduled maintenance would
+   * restart the very boot that is trying to finish — the #146 restart loop with a new cause. The
+   * container IS healthy. It is deliberately not taking players yet, and this block says so.
+   *
+   * Omitted entirely once players are accepted normally, so a healthy install's status payload is
+   * byte-identical to 2.0.0's.
+   */
+  const maintenance = bootDefer.statusBlock();
+  if (maintenance) body.maintenance = maintenance;
 
   // #146: the debug block is admin-toggleable (app_settings.status_debug_enabled),
   // defaulting to the STATUS_DEBUG_ENABLED env behavior. Cheap cached boolean. When off,
@@ -45,6 +76,7 @@ router.get('/', (req, res) => {
       ota_breaker: otaBreaker.stats(),            // rateBackoff{Total,LastWindow}
       ota_download: otaDownloadGuard.stats(),     // inFlight, served/shed ThisWindow + Total
       maintenance: getMaintenanceStats(),         // deleted, ms, at, running, sweepsTotal
+      wal_checkpoint: getCheckpointerState(),     // #240 worker alive?, sticky fallback?, respawns, WAL bytes
       log_coalescer_buffer: logCoalescer._size(),
     };
   }
@@ -61,19 +93,35 @@ function formatUptime(seconds) {
   return `${m}m`;
 }
 
+// These three routes take the session token from the query string / Authorization header
+// and resolve it themselves rather than sitting behind requireAuth. resolveSessionUser is
+// the SAME resolver requireAuth uses, so they inherit every check it makes (pre-TOTP
+// refusal, live user row, forced password change). Each keeps the exact status/body it
+// returned before for the invalid-token case.
+function denySession(res, err) {
+  if (err && err.code === 'mfa_required') return res.status(401).json({ error: 'mfa_required' });
+  if (err && err.code === 'password_change_required') return res.status(403).json({ error: 'password_change_required' });
+  return res.status(401).json({ error: 'Invalid token' });
+}
+
 // Full database backup (superadmin only)
 router.get('/backup', (req, res) => {
   const token = req.query.token;
   if (!token) return res.status(401).json({ error: 'Token required' });
 
+  let session;
   try {
-    const jwt = require('jsonwebtoken');
-    const config = require('../config');
-    const decoded = jwt.verify(token, config.jwtSecret);
-    const user = db.prepare('SELECT role FROM users WHERE id = ?').get(decoded.id);
-    if (!user || !PLATFORM_ROLES.includes(user.role)) return res.status(403).json({ error: 'Platform admin only' });
-  } catch {
-    return res.status(401).json({ error: 'Invalid token' });
+    session = resolveSessionUser(token);
+  } catch (err) {
+    // An unknown user id stays indistinguishable from "not a platform admin" (as before),
+    // so this endpoint never confirms whether a given id exists.
+    if (err.code === 'user_not_found') return res.status(403).json({ error: 'Platform admin only' });
+    return denySession(res, err);
+  }
+  // A break-glass identity has no users row, so it could never pass the role check here
+  // before; keep it that way rather than letting the synthetic role claim decide.
+  if (session.viaRecovery || !PLATFORM_ROLES.includes(session.user.role)) {
+    return res.status(403).json({ error: 'Platform admin only' });
   }
 
   const dbPath = require('../config').dbPath;
@@ -88,16 +136,19 @@ router.get('/export', (req, res) => {
   let userId;
   let workspaceId;
   try {
-    const jwt = require('jsonwebtoken');
-    const config = require('../config');
-    const decoded = jwt.verify(token, config.jwtSecret);
-    userId = decoded.id;
-    workspaceId = decoded.current_workspace_id || null;
+    const session = resolveSessionUser(token);
+    // For a break-glass identity this is the synthetic recovery id, which has no users
+    // row - the lookup below then 404s exactly as the inline verify did before.
+    userId = session.user.id;
+    workspaceId = session.decoded.current_workspace_id || null;
     if (!userId) return res.status(401).json({ error: 'Invalid token' });
-  } catch {
-    return res.status(401).json({ error: 'Invalid token' });
+  } catch (err) {
+    if (err.code === 'user_not_found') return res.status(404).json({ error: 'User not found' });
+    return denySession(res, err);
   }
 
+  // Re-read with the export's own column list (it needs created_at, which the session
+  // resolver doesn't select).
   const user = db.prepare('SELECT id, email, name, role, auth_provider, plan_id, created_at FROM users WHERE id = ?').get(userId);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
@@ -126,7 +177,7 @@ router.get('/export', (req, res) => {
   const playlists = db.prepare('SELECT id, name, description, is_auto_generated, created_at, updated_at FROM playlists WHERE user_id = ?').all(userId);
   const playlistIds = playlists.map(p => p.id);
   const playlistPlaceholders = playlistIds.map(() => '?').join(',') || "'__none__'";
-  const playlistItems = playlistIds.length ? db.prepare(`SELECT id, playlist_id, content_id, widget_id, sort_order, duration_sec FROM playlist_items WHERE playlist_id IN (${playlistPlaceholders})`).all(...playlistIds) : [];
+  const playlistItems = playlistIds.length ? db.prepare(`SELECT id, playlist_id, content_id, widget_id, child_playlist_id, sort_order, duration_sec FROM playlist_items WHERE playlist_id IN (${playlistPlaceholders})`).all(...playlistIds) : [];
 
   const schedules = db.prepare('SELECT id, device_id, group_id, zone_id, content_id, widget_id, layout_id, playlist_id, title, start_time, end_time, timezone, recurrence, recurrence_end, priority, enabled, color, created_at FROM schedules WHERE user_id = ?').all(userId);
   const videoWalls = db.prepare('SELECT * FROM video_walls WHERE user_id = ?').all(userId);
@@ -147,8 +198,11 @@ router.get('/export', (req, res) => {
     exported_at: new Date().toISOString(),
     user,
     devices: devices.map(d => {
-      const dev = db.prepare('SELECT playlist_id FROM devices WHERE id = ?').get(d.id);
-      return { ...d, playlist_id: dev?.playlist_id || null };
+      // playlist_source travels with the id: without it a restore cannot tell an operator's
+      // deliberate override from a playlist the device merely inherited, which is the exact
+      // distinction the whole inheritance model exists to record.
+      const dev = db.prepare('SELECT playlist_id, playlist_source FROM devices WHERE id = ?').get(d.id);
+      return { ...d, playlist_id: dev?.playlist_id || null, playlist_source: dev?.playlist_source || null };
     }),
     content,
     widgets: widgets.map(w => ({ ...w, config: JSON.parse(w.config || '{}') })),
@@ -219,18 +273,17 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
   let userId;
   let workspaceId;
   try {
-    const jwt = require('jsonwebtoken');
-    const jwtConfig = require('../config');
-    const decoded = jwt.verify(authHeader.split(' ')[1], jwtConfig.jwtSecret);
-    userId = decoded.id;
-    workspaceId = decoded.current_workspace_id || null;
+    const session = resolveSessionUser(authHeader.split(' ')[1]);
+    // A break-glass identity has no users row: the lookup this replaced returned nothing
+    // for it, so the route 404'd. Preserve that.
+    if (session.viaRecovery) return res.status(404).json({ error: 'User not found' });
+    userId = session.user.id;
+    workspaceId = session.decoded.current_workspace_id || null;
     if (!userId) return res.status(401).json({ error: 'Invalid token' });
-  } catch {
-    return res.status(401).json({ error: 'Invalid token' });
+  } catch (err) {
+    if (err.code === 'user_not_found') return res.status(404).json({ error: 'User not found' });
+    return denySession(res, err);
   }
-
-  const user = db.prepare('SELECT id, role FROM users WHERE id = ?').get(userId);
-  if (!user) return res.status(404).json({ error: 'User not found' });
 
   // Phase 2.2b: imports stamp workspace_id on devices and content so the
   // rows are visible to the workspace-filtered list endpoints. Fall back to
@@ -314,7 +367,7 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
     for (const d of (data.devices || [])) {
       const newId = uuid.v4();
       idMap.devices[d.id] = newId;
-      const pairingCode = String(Math.floor(100000 + Math.random() * 900000));
+      const pairingCode = sixDigitCode(); // CSPRNG (lib/numeric-code): this code claims a device
       db.prepare(`INSERT INTO devices (id, user_id, workspace_id, name, pairing_code, status, screen_width, screen_height, created_at) VALUES (?, ?, ?, ?, ?, 'provisioning', ?, ?, ?)`).run(newId, userId, workspaceId, d.name, pairingCode, d.screen_width || null, d.screen_height || null, d.created_at || Math.floor(Date.now() / 1000));
       stats.devices++;
     }
@@ -331,11 +384,33 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
       const files = extractedFiles[c.id];
       if (files && files.length > 0) {
         for (const f of files) {
-          const ext = path.extname(f.name);
-          const destName = `${newId}${ext}`;
+          // The archive chooses this name, so the extension is caller-controlled — the
+          // same defect the upload path fixes. Constrain it to the media allowlist; an
+          // entry with any other extension is skipped rather than written to the content
+          // dir under a name the browser would treat as an active document.
+          const ext = path.extname(f.name).toLowerCase();
+          if (!INLINE_SAFE_EXTS.has(ext)) continue;
+          /*
+           * ⚠️ A CONTENT-ADDRESSED NAME IS KEPT, and everything else is re-named to the new id.
+           *
+           * Files received over the mesh are stored as <sha256><ext>, and `filepath` sits inside
+           * the player's structural fingerprint. Renaming them on restore therefore changed the
+           * fingerprint of every playlist holding one — restarting playback at item 1 on every web
+           * and BrightSign screen in the estate, for files whose bytes had not changed at all.
+           *
+           * It also broke the far side: a hub re-pushing after a restore found no matching digest,
+           * concluded the assets were absent, re-transferred every one of them and charged the
+           * customer's storage allowance a second time for bytes they already had.
+           *
+           * Keeping the name is safe precisely because it IS the digest: identical name means
+           * identical bytes, so two rows sharing one is correct rather than a collision — and
+           * unlinking is refcounted now (lib/content-files.js), so neither row can take the other's
+           * file with it.
+           */
+          const destName = isDigestName(f.name) ? path.basename(f.name) : `${newId}${ext}`;
           const destPath = path.join(config.contentDir, destName);
           try {
-            fs.copyFileSync(f.path, destPath);
+            copyFileBytes(f.path, destPath);
             // Match original filepath vs thumbnail
             if (c.original_filepath && f.name === c.original_filepath) {
               newFilepath = destName;
@@ -352,7 +427,23 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
         }
       }
 
-      db.prepare(`INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, duration_sec, remote_url, thumbnail_path, width, height, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(newId, userId, workspaceId, c.filename, newFilepath, c.mime_type, c.file_size || 0, c.duration_sec || null, c.remote_url || null, newThumbnail, c.width || null, c.height || null, c.created_at || Math.floor(Date.now() / 1000));
+      /*
+       * ⚠️ byte_digest IS COMPUTED FROM THE RESTORED BYTES — the fifth writer named in that
+       * column's own migration note, and the one that was missed when the other four were done.
+       *
+       * Without it every restored row carries NULL, so the dedup lookup can never match one: a
+       * hub re-pushing content this server already holds transfers all of it again and spends the
+       * operator's allowance on storage they have already paid for. Hashing here costs one streamed
+       * read of a file written moments ago; failing to hash degrades to "cannot dedup", which is
+       * where the row would have been anyway, so it must never lose the restore.
+       */
+      let restoredDigest = null;
+      if (newFilepath) {
+        // Synchronous because this runs inside the restore's transaction — see digestFileSync.
+        restoredDigest = digestFileSync(path.join(config.contentDir, newFilepath));
+      }
+
+      db.prepare(`INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, duration_sec, remote_url, thumbnail_path, width, height, created_at, byte_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(newId, userId, workspaceId, c.filename, newFilepath, c.mime_type, c.file_size || 0, c.duration_sec || null, c.remote_url || null, newThumbnail, c.width || null, c.height || null, c.created_at || Math.floor(Date.now() / 1000), restoredDigest);
       stats.content++;
     }
 
@@ -393,13 +484,26 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
         if (!playlistId) continue;
         const contentId = pi.content_id ? idMap.content[pi.content_id] : null;
         const widgetId = pi.widget_id ? idMap.widgets[pi.widget_id] : null;
-        if (!contentId && !widgetId) continue;
-        db.prepare('INSERT INTO playlist_items (playlist_id, content_id, widget_id, sort_order, duration_sec) VALUES (?, ?, ?, ?, ?)').run(playlistId, contentId, widgetId, pi.sort_order || 0, pi.duration_sec || 10);
+        // Nested items remap through the SAME playlist id map — every playlist is inserted above,
+        // before any item, so a child's new id is always known here. Without this a nested item had
+        // no content and no widget and was dropped by the guard below: exporting a workspace and
+        // importing it silently returned playlists SHORTER than the ones exported.
+        const childPlaylistId = pi.child_playlist_id ? idMap.playlists[pi.child_playlist_id] : null;
+        if (!contentId && !widgetId && !childPlaylistId) continue;
+        db.prepare('INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, sort_order, duration_sec) VALUES (?, ?, ?, ?, ?, ?)').run(playlistId, contentId, widgetId, childPlaylistId, pi.sort_order || 0, pi.duration_sec || 10);
       }
       // Set device playlist_id references
       for (const d of (data.devices || [])) {
         if (d.playlist_id && idMap.playlists[d.playlist_id]) {
-          db.prepare('UPDATE devices SET playlist_id = ? WHERE id = ?').run(idMap.playlists[d.playlist_id], idMap.devices[d.id]);
+          /*
+           * ⚠️ An export written before playlist_source existed has none, and a restored device with
+           * an id but no classification would be resolved by the view's LAST-RESORT branch — which
+           * works, but sits BELOW its group and wall, so a restored override would quietly lose to
+           * a group it happens to be in. Defaulting an old export's rows to 'device' preserves what
+           * the backup actually recorded: an id on the device row and no notion of inheritance.
+           */
+          db.prepare('UPDATE devices SET playlist_id = ?, playlist_source = ? WHERE id = ?')
+            .run(idMap.playlists[d.playlist_id], d.playlist_source || 'device', idMap.devices[d.id]);
         }
       }
     } else {
@@ -418,6 +522,10 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
       db.prepare(`INSERT INTO schedules (id, user_id, device_id, group_id, zone_id, content_id, widget_id, layout_id, playlist_id, title, start_time, end_time, timezone, recurrence, recurrence_end, priority, enabled, color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(newId, userId, devId, grpId, s.zone_id ? (idMap.zones[s.zone_id] || null) : null, s.content_id ? (idMap.content[s.content_id] || null) : null, s.widget_id ? (idMap.widgets[s.widget_id] || null) : null, s.layout_id ? (idMap.layouts[s.layout_id] || null) : null, playlistId, s.title || '', s.start_time, s.end_time, s.timezone || 'UTC', s.recurrence || null, s.recurrence_end || null, s.priority || 0, s.enabled !== undefined ? s.enabled : 1, s.color || '#3B82F6', s.created_at || Math.floor(Date.now() / 1000));
       stats.schedules++;
     }
+
+    // Version history: the imported rows get their first revision, attributed to the import, from
+    // the state that was just written (items and zones included, since this runs after them).
+    try { require('../lib/revisions').recordMissingIn(db, workspaceId, { userId, kind: 'import', label: 'workspace import' }, 'Imported'); } catch (e) { console.warn('[import] revisions:', e.message); }
 
     // Import video walls
     for (const w of (data.video_walls || [])) {

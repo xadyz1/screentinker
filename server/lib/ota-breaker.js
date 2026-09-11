@@ -33,6 +33,10 @@ const COOLDOWNS_MS = (process.env.OTA_BREAKER_COOLDOWNS_MS
   ? process.env.OTA_BREAKER_COOLDOWNS_MS.split(',').map(s => parseInt(s, 10))
   : [30_000, 120_000, 480_000, 1_800_000]);                               // 30s -> 2m -> 8m -> cap 30m
 const IDLE_RESET_MS = parseInt(process.env.OTA_BREAKER_IDLE_RESET_MS) || 60 * 60 * 1000;
+// #341 — how many times the same target may be offered to the same key before we accept that it
+// is not landing. Forgiving on purpose: a display can legitimately check once or twice mid-install
+// or across the reboot, so this is not 1. It is a progress check, not a rate check.
+const NO_PROGRESS_LIMIT = parseInt(process.env.OTA_BREAKER_NO_PROGRESS_LIMIT) || 6;
 
 const state = new Map();          // key -> { hits:number[], blockedUntil, level, lastSeen }
 const loggedBad = new Set();      // log unrecognized/superseded versions once
@@ -41,6 +45,8 @@ const { rollingCounter, bump, read } = require('./rolling-counter');
 const rateBackoffCtr = rollingCounter();
 
 // --- minimal semver-ish parse/compare (no dependency) ---
+const { preCmp } = require('./version-precedence');
+
 function parseVer(v) {
   if (typeof v !== 'string') return null;
   const m = /^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/.exec(v.trim());
@@ -54,8 +60,10 @@ function cmpParsed(a, b) {
   if (a.pre === b.pre) return 0;
   if (a.pre === null) return 1;     // release outranks a prerelease of the same core
   if (b.pre === null) return -1;
-  // lexical prerelease compare — fine for beta1..beta9 (cores decide everything else).
-  return a.pre < b.pre ? -1 : (a.pre > b.pre ? 1 : 0);
+  // Natural prerelease compare: digit runs numerically, so alpha8 < alpha9 < alpha10 < alpha11.
+  // A plain lexical compare (what this used to do) put every build from alpha10 onward BELOW
+  // alpha8, so the check answered client-newer and the fleet could not be moved forward at all.
+  return preCmp(a.pre, b.pre);
 }
 function cmp(a, b) { const pa = parseVer(a), pb = parseVer(b); return (!pa || !pb) ? null : cmpParsed(pa, pb); }
 
@@ -68,16 +76,51 @@ function isReleased(p) { return p.pre === null || /^patch\d+$/i.test(p.pre); }
 
 // decide(clientVersion, latestVersion, deviceId?, now?) ->
 //   { update_available, reason, retry_after_seconds?, log? }
-function decide(clientVersion, latestVersion, deviceId = null, now = Date.now()) {
+function decide(clientVersion, latestVersion, deviceId = null, now = Date.now(), betaChannel = false, wasOnBeta = false) {
   // ---- PHANTOM / unrecognized guard (immediate, version-based, no rate state) ----
   if (!clientVersion) return { update_available: false, reason: 'no-version' };
   const pc = parseVer(clientVersion), pl = parseVer(latestVersion);
   if (!pc || !pl) return { update_available: false, reason: 'unrecognized-version', log: logOnce(clientVersion, `[ota] unrecognized client version '${clientVersion}' — no offer (latest=${latestVersion})`) };
   const full = cmpParsed(pc, pl);
   if (full === 0) return { update_available: false, reason: 'up-to-date' };
-  if (full > 0) return { update_available: false, reason: 'client-newer' };       // never offer a downgrade
-  if (!isReleased(pc) && coreCmp(pc, pl) < 0) {                                    // GENUINE superseded old-core prerelease (e.g. 1.9.1-beta4) — a -patchN release is NOT one, so it still gets offered
+  if (full > 0) {
+    // Normally a client ahead of the server is left alone — never offer a downgrade. But a display
+    // running a PRE-RELEASE while not opted into betas is a display someone has just switched back
+    // to the release line, and stable is legitimately "older" than the beta it is replacing. Without
+    // this it is stranded on the beta build forever, and unticking the box would appear to do
+    // nothing — the same silent no-op the opt-in exists to remove.
+    //
+    // A client ahead on a genuine RELEASE still gets client-newer: that is a rolled-back server, and
+    // pushing it backwards would be wrong.
+    //
+    // NOTE: the server can only OFFER. Android refuses to install a lower versionCode, so a beta
+    // build must be cut with a versionCode no higher than the stable it branches from — equal is
+    // ideal, since equal codes install in both directions. A beta with a higher code cannot be
+    // returned to stable without an uninstall, whatever this endpoint says.
+    // wasOnBeta is the evidence that this display was actually being served the beta channel. A
+    // display that has simply always run its own pre-release build is left alone, exactly as
+    // before — #144's protection for a tester ahead of the server is untouched.
+    if (!betaChannel && wasOnBeta && !isReleased(pc)) {
+      return { update_available: true, reason: 'channel-return' };
+    }
+    return { update_available: false, reason: 'client-newer' };
+  }
+  // betaChannel is exempt: this guard would otherwise strand the very displays we hand test
+  // builds to. A tester on 1.9.25-fix234d has an older core than a released 1.9.26, so without
+  // the exemption they are told "superseded" forever and never rejoin the release line — the
+  // opposite of what opting in should mean. Opting in must be reversible by shipping a release.
+  if (!betaChannel && !isReleased(pc) && coreCmp(pc, pl) < 0) {                                    // GENUINE superseded old-core prerelease (e.g. 1.9.1-beta4) — a -patchN release is NOT one, so it still gets offered
     return { update_available: false, reason: 'superseded-prerelease', log: logOnce(clientVersion, `[ota] superseded prerelease '${clientVersion}' (older core than latest=${latestVersion}) — no offer`) };
+  }
+
+  // A display opted into pre-release builds keeps a prerelease of the CURRENT core. Semver puts
+  // 1.9.25-fix234d below 1.9.25, so without this the only "upgrade" on offer is dropping the very
+  // build we asked this display to run — which is how a test build silently reverts. Scoped to the
+  // same core on purpose: an older-core prerelease is genuinely stale and still gets offered, and
+  // once 1.9.26 ships a 1.9.25-anything device is behind and updates normally. So opting in cannot
+  // strand a display on an abandoned branch.
+  if (betaChannel && !isReleased(pc) && coreCmp(pc, pl) === 0) {
+    return { update_available: false, reason: 'beta-channel' };
   }
 
   // ---- offerable (recent real older version) -> RATE breaker, keyed per device / per version ----
@@ -107,6 +150,31 @@ function decide(clientVersion, latestVersion, deviceId = null, now = Date.now())
     return { update_available: false, reason: 'rate-backoff', retry_after_seconds: Math.ceil(cd / 1000),
              log: `[ota] breaker tripped key=${key} (>${THRESHOLD} checks/${Math.round(WINDOW_MS / 1000)}s, looping) -> backoff ${Math.round(cd / 1000)}s [level ${b.level}]` };
   }
+
+  /*
+   * #341 — PROGRESS axis. This is the "skip-after-N" that #144 named as option 3 and deliberately
+   * left out; see the scope test in ota-breaker.test.js. The rate breaker above assumes
+   * "slow == safe", and that is wrong for a loop that never terminates: two field displays polled every ~15 minutes, well under the rate
+   * threshold, and reinstalled the same APK 493 times over five days. Nothing failed, so nothing
+   * backed off.
+   *
+   * So count offers of THE SAME target to THE SAME key while the reported version does not move.
+   * Any real progress resets it: the display coming back on a new version, or the server starting
+   * to advertise a different target (an operator fixing the APK). An update that genuinely cannot
+   * be applied - signing mismatch, an OTA client too old to install it, a same-version reinstall -
+   * stops being offered instead of looping forever.
+   */
+  if (b.offerFrom !== clientVersion || b.offerTo !== latestVersion) {
+    b.offerFrom = clientVersion; b.offerTo = latestVersion; b.offers = 0;
+  }
+  b.offers = (b.offers || 0) + 1;
+  if (b.offers > NO_PROGRESS_LIMIT) {
+    return {
+      update_available: false, reason: 'no-progress',
+      log: logOnce('np:' + key + ':' + clientVersion + '>' + latestVersion,
+        `[ota] no progress key=${key}: offered ${latestVersion} to a device still reporting ${clientVersion} ${b.offers} times -> holding off. The served APK probably is not ${latestVersion}, or the display cannot install it.`),
+    };
+  }
   return { update_available: true, reason: 'offer' };
 }
 
@@ -129,6 +197,29 @@ function startSweep() {
 }
 
 function reset() { state.clear(); loggedBad.clear(); Object.assign(rateBackoffCtr, rollingCounter()); }
+
+// Forgive ONE device's rate state, called when that device proves its identity on the /device
+// socket (a valid device_token, timing-safe compared).
+//
+// /api/update/check is deliberately unauthenticated — every client version, including old ones
+// that never learned to send a token, has to be able to ask. That means `?device_id=` is
+// caller-supplied, so anyone who learns a device's UUID can burn its bucket with a handful of
+// requests and leave the REAL device in rate-backoff, silently un-updatable, for up to 30
+// minutes at a time.
+//
+// Adding auth to the check would strand old clients, and keying on IP is wrong here (the fleet
+// SNATs — see the note at the top of this file). So instead the poisoning is made
+// self-healing: the genuine device reconnects on its own schedule, proves who it is, and gets
+// its bucket cleared. An attacker can still cause noise, but the denial now lasts until the
+// device's next authenticated reconnect rather than as long as the attacker keeps poking.
+//
+// This cannot be used to evade the breaker's real job: a device stuck in an OTA loop is
+// re-registering legitimately, and clearing its rate state on each genuine reconnect is exactly
+// what a healthy device looks like — the loop protection is the DOWNLOAD guard, not this.
+function forgiveDevice(deviceId) {
+  if (!deviceId) return false;
+  return state.delete('d:' + deviceId);
+}
 function _size() { return state.size; }
 // #146 observability — how many update checks the breaker is rate-backing-off (total +
 // last completed window). A device=none 1.8.x flood shows here as rateBackoffLastWindow.
@@ -136,4 +227,4 @@ function stats(now = Date.now()) {
   const rb = read(rateBackoffCtr, now);
   return { rateBackoffTotal: rb.total, rateBackoffLastWindow: rb.lastWindow };
 }
-module.exports = { decide, reset, sweep, startSweep, cmp, parseVer, _size, stats, WINDOW_MS, THRESHOLD };
+module.exports = { decide, reset, forgiveDevice, sweep, startSweep, cmp, parseVer, _size, stats, WINDOW_MS, THRESHOLD };

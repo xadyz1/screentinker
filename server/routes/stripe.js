@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { db } = require('../db/database');
+const { sendPaymentReceipt } = require('../services/billingEmails');
 const { requireAuth } = require('../middleware/auth');
 const config = require('../config');
 
@@ -50,6 +51,11 @@ router.post('/checkout', requireAuth, async (req, res) => {
       customer: customerId,
       mode: 'subscription',
       payment_method_types: ['card'],
+      // Renders the "Add promotion code" field on Stripe's hosted checkout page. For
+      // API-created sessions this is the ONLY way to enable it — there is no Stripe Dashboard
+      // toggle for it outside Payment Links (which we don't use). Do not remove thinking it's
+      // redundant with a dashboard setting.
+      allow_promotion_codes: true,
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: `${req.headers.origin || appUrl}/#/settings?payment=success`,
       cancel_url: `${req.headers.origin || appUrl}/#/settings?payment=cancelled`,
@@ -103,6 +109,9 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
 
   console.log(`Stripe webhook: ${event.type}`);
 
+  // Set by the payment_succeeded case; sent after the response. See that case for why.
+  let pendingReceipt = null;
+
   try {
     switch (event.type) {
       case 'checkout.session.completed': {
@@ -150,6 +159,28 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         break;
       }
 
+      /*
+       * ⚠️ invoice.payment_succeeded, NOT checkout.session.completed.
+       *
+       * Checkout fires once, for the first payment made through the hosted page. Every renewal
+       * after that, and every payment made from the billing portal or after a card is fixed, is an
+       * invoice — so a receipt hung off checkout would arrive for a customer's first month and
+       * never again. This event covers all of them, which is also why the send has to be idempotent
+       * rather than merely rare.
+       */
+      case 'invoice.payment_succeeded': {
+        /*
+         * ⚠️ DEFERRED UNTIL AFTER THE 200, not awaited here. Stripe's own guidance is to acknowledge
+         * quickly and do the work afterwards, and this send is a network round trip to Graph or
+         * SMTP with NO TIMEOUT anywhere in services/email.js — a hung transport would hold the
+         * webhook open until Stripe gave up and retried, and enough of those pile up as open
+         * requests. Deferring is safe precisely because the send is idempotent: a retry that
+         * arrives while the first is still sending is refused by the invoice claim, not by luck.
+         */
+        pendingReceipt = event.data.object;
+        break;
+      }
+
       case 'invoice.payment_failed': {
         const invoice = event.data.object;
         const subId = invoice.subscription;
@@ -168,6 +199,22 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
   }
 
   res.json({ received: true });
+
+  /*
+   * After the acknowledgement, and deliberately not awaited by the request. Errors cannot reach the
+   * response any more, so sendPaymentReceipt logs its own — it returns a result for every path
+   * including its own bugs, and the .catch is the belt to that braces.
+   */
+  if (pendingReceipt) {
+    sendPaymentReceipt(pendingReceipt)
+      .then((r) => {
+        if (r.sent) console.log(`Payment receipt emailed for invoice ${pendingReceipt.id}`);
+        else if (r.reason !== 'already_sent') {
+          console.log(`No payment receipt for invoice ${pendingReceipt.id}: ${r.reason}`);
+        }
+      })
+      .catch((e) => console.error('[billing] receipt dispatch failed:', e && e.message));
+  }
 });
 
 module.exports = router;

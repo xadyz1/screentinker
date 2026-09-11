@@ -10,7 +10,7 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" href="/assets/icon-192.png">
   <link rel="apple-touch-icon" href="/assets/icon-192.png">
-  <title>GoldenSignage</title>
+  <title>SwiftDisplay</title>
   
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -20,6 +20,11 @@
   <link rel="stylesheet" href="/css/reset.css">
   <link rel="stylesheet" href="/css/main.css">
   <script src="/socket.io/socket.io.js"></script>
+  <!-- #238: the players' own rotation rule (server/lib/orientation-style.js), served under /player
+       because it IS the player's — the dashboard previews of rotated screens went sideways for as
+       long as this side derived its own geometry. Classic script: it publishes window.OrientationStyle
+       for both the player and the ES-module dashboard. -->
+  <script src="/player/orientation-style.js"></script>
   <!-- OAuth providers loaded on-demand by login.js when needed -->
 </head>
 <body>
@@ -76,6 +81,27 @@
         </svg>
         <span>Widgets</span>
       </a></li>
+      <li><a href="#/slides" class="nav-link" data-view="slides">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="2" y="4" width="14" height="10" rx="1"/><path d="M8 18h12"/><path d="M20 8v10"/>
+        </svg>
+        <span>Slides</span>
+      </a></li>
+      <li><a href="#/data-sources" class="nav-link" data-view="data-sources">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+          <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+          <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+        </svg>
+        <span>Data Sources</span>
+      </a></li>
+      <li><a href="#/reviews" class="nav-link" data-view="reviews">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M9 11l3 3L22 4"></path>
+          <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+        </svg>
+        <span>Reviews</span><span id="reviewsNavBadge" class="member-badge" style="display:none;margin-left:auto"></span>
+      </a></li>
       <li><a href="#/schedule" class="nav-link" data-view="schedule">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
@@ -88,6 +114,22 @@
           <rect x="2" y="13" width="9" height="8" rx="1"/><rect x="13" y="13" width="9" height="8" rx="1"/>
         </svg>
         <span>Video Walls</span>
+      </a></li>
+      <!-- ⚠️ A top-level section, NOT a workspace. Nodes are not screens and must not join
+           the Displays list; and remote workspaces deliberately never enter the workspace
+           switcher, which assumes a local writable workspace. -->
+      <li><a href="#/triggers" class="nav-link" data-view="triggers">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+        </svg>
+        <span data-i18n="nav.triggers">Triggers</span>
+      </a></li>
+      <li id="serversNavItem" style="display:none"><a href="#/servers" class="nav-link" data-view="servers">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="2" y="3" width="20" height="6" rx="1"/><rect x="2" y="15" width="20" height="6" rx="1"/>
+          <line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>
+        </svg>
+        <span data-i18n="nav.servers">Servers</span>
       </a></li>
       <li><a href="#/reports" class="nav-link" data-view="reports">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -124,6 +166,16 @@
           <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
         </svg>
         <span>Teams</span>
+      </a></li>
+      <!-- Members: inviting a colleague is a core action, and the only route to it used to be
+           an unlabelled icon beside the workspace name. #/members resolves to the ACTIVE
+           workspace so this link can stay static. -->
+      <li><a href="#/members" class="nav-link" data-view="members">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+        </svg>
+        <span>Members</span>
       </a></li>
       <li><a href="#/help" class="nav-link" data-view="help">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -164,9 +216,13 @@
     </div>
   </nav>
 
-  <main class="content" id="app">
-    <!-- Views rendered here -->
-  </main>
+  <div class="main-wrapper">
+    <div id="banners"></div>
+
+    <main class="content" id="app">
+      <!-- Views rendered here -->
+    </main>
+  </div>
 
   <!-- Add Device Modal -->
   <div class="modal-overlay" id="addDeviceModal" style="display:none">
@@ -180,8 +236,22 @@
         </button>
       </div>
       <div class="modal-body">
-        <p class="modal-description" style="margin-bottom:16px" data-i18n="add_display.intro">Enter the 6-digit pairing code shown on the display.</p>
-        <div class="form-group">
+       <div id="addDeviceForm">
+        <p class="modal-description" style="margin-bottom:16px" id="addDeviceIntro" data-i18n="add_display.intro">Enter the 6-digit pairing code shown on the display.</p>
+        <!--
+          #313 — the escape hatch for a player that cannot remember it was paired. A vMix browser
+          input deletes its whole profile when vMix closes, so pairing it the ordinary way works
+          exactly once. Ticking this creates the display here and hands back a URL that carries its
+          identity, so there is no code to type and nothing for the player to forget.
+        -->
+        <label style="display:flex;gap:8px;align-items:flex-start;margin-bottom:16px;cursor:pointer">
+          <input type="checkbox" id="addDeviceNoStorage" style="margin-top:3px">
+          <span>
+            <span style="font-size:13px" data-i18n="add_display.no_storage">This player can't stay paired (vMix browser input, resetting kiosk)</span>
+            <span style="display:block;font-size:11px;color:var(--text-muted,#64748b);margin-top:2px" data-i18n="add_display.no_storage_hint">Creates the display here and gives you a URL to paste into the player instead of a pairing code.</span>
+          </span>
+        </label>
+        <div class="form-group" id="pairingCodeGroup">
           <label data-i18n="add_display.pairing_code">Pairing Code</label>
           <input type="text" id="pairingCodeInput" maxlength="6" pattern="[0-9]{6}" placeholder="000000" class="pairing-input">
         </div>
@@ -189,8 +259,13 @@
           <label data-i18n="add_display.display_name">Display Name (optional)</label>
           <input type="text" id="deviceNameInput" data-i18n-placeholder="add_display.name_placeholder" placeholder="e.g., Lobby TV" class="input">
         </div>
-        <div style="border-top:1px solid var(--border,#1e293b);margin-top:20px;padding-top:16px">
-          <p style="font-size:12px;color:var(--text-muted,#64748b);margin-bottom:10px;font-weight:500" data-i18n="add_display.need_player">Need a player app? Install one to get a pairing code:</p>
+         <div style="background:var(--bg-input,#0f172a);border-radius:6px;padding:10px 12px;margin-top:16px;border:1px solid var(--border,#1e293b)">
+           <span style="font-size:11px;color:var(--text-muted,#64748b);font-weight:500" data-i18n="add_display.server_url_label">Server URL</span>
+           <code id="addDeviceServerUrl" style="display:block;font-size:13px;margin:2px 0;color:var(--primary,#3b82f6);word-break:break-all"></code>
+           <span style="font-size:11px;color:var(--text-muted,#64748b)" data-i18n="add_display.server_url_hint">Use this URL when configuring the Android app</span>
+         </div>
+         <div style="border-top:1px solid var(--border,#1e293b);margin-top:20px;padding-top:16px">
+           <p style="font-size:12px;color:var(--text-muted,#64748b);margin-bottom:10px;font-weight:500" data-i18n="add_display.need_player">Need a player app? Install one to get a pairing code:</p>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
             <a href="/download/apk" class="btn btn-secondary btn-sm" style="text-decoration:none;justify-content:center;font-size:12px">
               &#129302; <span data-i18n="add_display.android_apk">Android APK</span>
@@ -205,7 +280,7 @@
               &#128187; <span data-i18n="add_display.windows">Windows</span>
             </a>
           </div>
-          <p style="font-size:11px;color:var(--text-muted,#64748b);margin-top:8px" data-i18n-html="add_display.smart_tv_note">Smart TVs (LG/Samsung): open the built-in browser and navigate to <code style="background:var(--bg-input,#0f172a);padding:1px 4px;border-radius:3px">/player</code></p>
+           <p style="font-size:11px;color:var(--text-muted,#64748b);margin-top:8px;line-height:1.5"><span data-i18n="add_display.smart_tv_prefix">Smart TVs (LG/Samsung): open the built-in browser and navigate to</span> <code id="addDeviceSmartTvUrl" style="background:var(--bg-input,#0f172a);padding:1px 4px;border-radius:3px;white-space:nowrap">/player</code></p>
         </div>
         <div style="border-top:1px solid var(--border,#1e293b);margin-top:16px;padding-top:16px">
           <p style="font-size:12px;color:var(--text-muted,#64748b);margin-bottom:10px;font-weight:500" data-i18n="add_display.owner_prompt">Provisioning a fresh / factory-reset Android panel? Enroll it as device owner for silent updates, reboot &amp; kiosk:</p>
@@ -213,6 +288,22 @@
             &#128242; <span data-i18n="add_display.owner_qr_btn">Show device-owner QR</span>
           </button>
         </div>
+       </div>
+       <!--
+         #313 — the URL shown after creating a display for a player that cannot stay paired.
+         A SIBLING of the form, not a replacement for it: this markup is in the page once and the
+         dialog is reopened from it every time, so overwriting the body left the dialog permanently
+         stuck on this panel — and took normal pairing with it, because the open handler clears
+         inputs that were no longer there.
+       -->
+       <div id="addDeviceResult" style="display:none">
+         <p class="modal-description" style="margin-bottom:12px" data-i18n="add_display.created_intro">Display created.</p>
+         <input class="input" id="createdPlayerUrl" readonly style="width:100%;font-family:monospace;font-size:11px">
+         <div style="display:flex;gap:8px;margin-top:10px">
+           <button type="button" class="btn btn-secondary btn-sm" id="createdCopyBtn" data-i18n="device.enrol.copy">Copy</button>
+         </div>
+         <div style="font-size:11px;color:#fbbf24;margin-top:10px" data-i18n="device.enrol.warning"></div>
+       </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" data-close-modal="addDeviceModal" data-i18n="common.cancel">Cancel</button>

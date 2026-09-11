@@ -20,13 +20,30 @@ function parseBillingRateTable(raw) {
   return null;
 }
 
+const { parseSize } = require('./lib/parse-size');
+
 module.exports = {
+  /*
+   * #trigger-ingress: let the SERVER hold the LAN trigger door open and forward what arrives to the
+   * addressed device. Off by default — opening an unauthenticated LAN port on the server is a
+   * different security posture from opening one on a panel, and must be a deliberate choice.
+   * Needed wherever a player cannot bind a socket itself (BrightSign's server-on-a-player widget
+   * has no Node), and useful where a control system can reach the server but not each screen.
+   */
+  triggerIngress: process.env.TRIGGER_INGRESS === '1' || process.env.TRIGGER_INGRESS === 'true',
+  /** UDP port for the server-side door. Only bound when triggerIngress is on. */
+  triggerIngressUdpPort: Number(process.env.TRIGGER_INGRESS_UDP_PORT || 7847),
+
   port: process.env.PORT || 3001,
   httpsPort: process.env.HTTPS_PORT || 3443,
   dataDir: DATA_DIR,
   dbPath: process.env.DB_PATH || path.join(DATA_DIR, 'db', 'remote_display.db'),
   uploadsDir,
   contentDir: path.join(uploadsDir, 'content'),
+  // ⚠️ NOT under contentDir. Fonts are not playlist content — they are never listed in the library,
+  // never assigned to a screen, and are served from their own mount with headers a font needs and
+  // content does not (see the /fonts mount in server.js).
+  fontsDir: path.join(uploadsDir, 'fonts'),
   screenshotsDir: path.join(uploadsDir, 'screenshots'),
   certsDir,
   frontendDir: path.join(__dirname, '..', 'frontend'),
@@ -36,6 +53,38 @@ module.exports = {
   // managed panels). Per-device override lives on devices.ota_enabled; the app additionally
   // stands down on its own when a foreign device owner (MDM) manages it.
   otaEnabled: process.env.OTA_ENABLED !== 'false',
+
+  /* ==========================================================================================
+   * MESH (2.0) — off by default and INVISIBLE.
+   *
+   * ⚠️ Both flags default to off, and with them off there is no new UI, no new route, no background
+   * work and no schema behaviour. A user who never sets them must not be able to tell the mesh
+   * exists. That is a stated guarantee of the directive, not an implementation detail — the Phase 0
+   * schema is empty tables precisely so this holds.
+   *
+   * TWO FLAGS, NOT ONE, because accepting observation and becoming an observer are different risks
+   * with different blast radii. A node that accepts enrollments is exposing its own data upward on
+   * someone else's request; a node that enrols upward is choosing to report. An operator may well
+   * want one and not the other, and a single flag would force them to take both.
+   * ========================================================================================== */
+
+  // May this node mint pairing codes and accept children? Required to act as hub/proxy/relay/sink.
+  meshAcceptEnrollment: ['1', 'true', 'yes'].includes(
+    String(process.env.MESH_ACCEPT_ENROLLMENT || '').toLowerCase()),
+
+  // May this node enrol upward to a parent?
+  meshAllowUplink: ['1', 'true', 'yes'].includes(
+    String(process.env.MESH_ALLOW_UPLINK || '').toLowerCase()),
+
+  // Runtime depth cap. ⚠️ Stays at 2 until Phase 4: two tiers must run against real hardware before
+  // multi-hop relay, deep clock skew and aggregate fidelity are anything but theory.
+  meshMaxDepth: parseInt(process.env.MESH_MAX_DEPTH) || 2,
+
+  // Oldest peer this node will form an edge with. ⚠️ `2.0.0-0`, not `2.0.0`: a prerelease sorts
+  // BELOW its own release, so the tighter-looking floor refuses every 2.0.0-alpha node — including
+  // one running identical code. See server/lib/mesh/node-identity.js.
+  meshMinNodeVersion: process.env.MESH_MIN_NODE_VERSION || '2.0.0-0',
+
   // App-level heartbeat. Checker runs every heartbeatInterval and marks
   // devices offline if last_heartbeat is older than heartbeatTimeout.
   // Env override for self-hosters on slow/jittery networks (issue #3:
@@ -59,7 +108,13 @@ module.exports = {
   // #148 Item 4: TCP SO_KEEPALIVE idle delay — OS-level dead-peer probing independent of the
   // app ping, so a half-open TCP can't persist indefinitely.
   tcpKeepAliveMs: parseInt(process.env.TCP_KEEPALIVE_MS) || 20000,
-  maxFileSize: 500 * 1024 * 1024, // 500MB
+  // Upload ceiling, #233. Accepts bytes or a suffix (MAX_FILE_SIZE=2GB). An env var is a
+  // string, so this must be parsed rather than used directly — multer's limits.fileSize wants a
+  // number, and an unparseable value falls back to the default rather than becoming NaN, which
+  // would reject every upload. NOTE: a reverse proxy caps the request body independently
+  // (nginx client_max_body_size, and any CDN in front) and returns 413 before the app is
+  // reached, so raising this alone is not enough — see the README.
+  maxFileSize: parseSize(process.env.MAX_FILE_SIZE, 500 * 1024 * 1024), // default 500MB
   thumbnailWidth: 320,
   screenshotQuality: 70,
   // SSL: drop your Cloudflare Origin cert + key in certs/ folder
@@ -76,11 +131,14 @@ module.exports = {
     return secret;
   })(),
   jwtExpiry: '7d',
-  // Google OAuth - set these in env or here
-  googleClientId: process.env.GOOGLE_CLIENT_ID || '',
-  // Microsoft OAuth - set these in env or here
-  microsoftClientId: process.env.MICROSOFT_CLIENT_ID || '',
-  microsoftTenantId: process.env.MICROSOFT_TENANT_ID || 'common',
+  /*
+   * Google and Microsoft sign-in are configured through lib/oidc-providers.js, which reads
+   * process.env directly — there is nothing here for it to read, so these fields were dead, and
+   * `microsoftTenantId` defaulting to 'common' actively contradicted the provider code, which now
+   * REFUSES 'common' (it advertises a template issuer that can never match, and accepting it means
+   * accepting tokens from every Azure tenant — nOAuth). Removed rather than left as a trap for the
+   * next person who greps for where Microsoft SSO is configured.
+   */
   // Stripe (optional - for paid subscriptions)
   stripeSecretKey: process.env.STRIPE_SECRET_KEY || '',
   stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
@@ -119,6 +177,14 @@ module.exports = {
   // Disable public registration (OAuth auto-signup is also blocked when set).
   // First-user setup is still allowed so a fresh install can be initialized.
   disableRegistration: ['true', '1'].includes(String(process.env.DISABLE_REGISTRATION || '').toLowerCase()),
+  // #166 escape hatch: let players self-update EVEN WHEN an MDM/DPC owns the device.
+  // Off by default, because the default is the safe one — on a managed panel the install
+  // confirm dialog can't be reliably auto-dismissed and ends up sitting over customer content,
+  // and the MDM is normally the thing that pushes packages. Set this only when you run an MDM
+  // that does NOT distribute the player and you want ScreenTinker's OTA to own updates instead.
+  // Advertised to players in /api/update/check as `allow_managed`; a player that doesn't
+  // understand the field simply keeps its own behaviour.
+  otaAllowManagedDevices: ['true', '1'].includes(String(process.env.OTA_ALLOW_MANAGED_DEVICES || '').toLowerCase()),
   // Redirect / -> /app instead of serving the marketing landing page.
   // For self-hosted internal deployments that don't want the public homepage.
   disableHomepage: ['true', '1'].includes(String(process.env.DISABLE_HOMEPAGE || '').toLowerCase()),
@@ -146,6 +212,20 @@ module.exports = {
   lagElevatedMs: parseInt(process.env.LAG_ELEVATED_MS) || 100,
   lagCriticalMs: parseInt(process.env.LAG_CRITICAL_MS) || 250,
   lagReleaseSamples: parseInt(process.env.LAG_RELEASE_SAMPLES) || 5,
+  /*
+   * ⚠️ #307: how many sampling windows the band is decided over. One window's p99 is that window's
+   * MAXIMUM (a ~49-record histogram has no 99th percentile to speak of), so a single window is a
+   * measure of the worst 20ms bucket in a second, not of load. The median across this many windows
+   * is what the band actually reads.
+   */
+  lagBandWindowSamples: parseInt(process.env.LAG_BAND_WINDOW_SAMPLES) || 15,
+  /*
+   * #307: how many stranded plays each maintenance sweep closes. Bounded because the table has
+   * 1.44M rows on a synchronous driver — the backlog drains over successive sweeps rather than in
+   * one long UPDATE, which is the failure this whole issue is about.
+   */
+  strandedPlayBatch: parseInt(process.env.STRANDED_PLAY_BATCH) || 500,
+  strandedPlayMaxBatchesPerSweep: parseInt(process.env.STRANDED_PLAY_MAX_BATCHES) || 4,
 
   // #142 load-aware per-device reconnect throttle (lib/reconnect-throttle.js).
   // The verdict of WHO is misbehaving is ALWAYS per-device (keyed on device_id):
@@ -210,6 +290,11 @@ module.exports = {
   // is LOWER than the old hardcoded 7 days (the reporter's bloat happened under 7d);
   // 2-3 days is plenty for the dashboard's 24h uptime view + diagnostics.
   statusLogRetentionDays: parseFloat(process.env.STATUS_LOG_RETENTION_DAYS) || 3,
+  // #240 device_telemetry age retention (pruneTelemetryRetention in db/database.js). The
+  // per-heartbeat row cap only trims devices that are still reporting; this closes the
+  // rows left behind by ones that stopped. 30d matches the uptime report's default window,
+  // so it can only remove rows the report would not have shown anyway.
+  telemetryRetentionDays: parseFloat(process.env.TELEMETRY_RETENTION_DAYS) || 30,
   // #146 HARD per-device row-count ceiling on device_status_log, enforced by the
   // global sweep alongside the age delete above. Age-based retention can't bound a
   // write storm (rows are all younger than the window), so a reconnect storm grew
@@ -287,6 +372,24 @@ module.exports = {
   // ...or escalate if the WAL grew across this many consecutive PASSIVE runs (PASSIVE not
   // keeping up even below the high-water). Belt-and-suspenders with the MB bound above.
   walCheckpointStarvationRuns: parseInt(process.env.WAL_CHECKPOINT_STARVATION_RUNS) || 3,
+  // #240: ...but growth alone is NOT starvation. Any sustained write burst — a fleet
+  // powering on in the morning — grows the WAL across several consecutive PASSIVE runs
+  // while it is still tiny. Escalating there buys nothing (there is nothing to reclaim)
+  // and costs a lot: TRUNCATE is the BLOCKING form, and it blocks across connections, so
+  // every main-thread statement issued during it sits in SQLite's busy handler (5s by
+  // default in better-sqlite3) — a multi-second loop stall at exactly the moment the
+  // fleet is reconnecting. So the growth signal may only escalate once the WAL is big
+  // enough for a blocking checkpoint to be worth it. The high-water mark above is
+  // unchanged and remains the hard backstop, so the WAL still cannot grow unbounded.
+  // Set at half the high-water mark: a WAL still in the lower half is not worth blocking
+  // for, and anything in the upper half is close enough to the backstop to be worth it.
+  walCheckpointStarvationFloorMB: parseFloat(process.env.WAL_CHECKPOINT_STARVATION_FLOOR_MB) || 8,
+  // #240: the floor alone is not enough — a WAL that already sits above it (Bold's was
+  // 6.2MB against a 16MB high-water) would still escalate on every burst. So the growth
+  // path is ALSO rate-limited: however long the write pressure lasts, our own maintenance
+  // may stall the loop at most once per this window. The high-water escalation is
+  // deliberately EXEMPT — that one is the runaway-WAL backstop and must never be delayed.
+  walCheckpointEscalateCooldownMs: parseInt(process.env.WAL_CHECKPOINT_ESCALATE_COOLDOWN_MS) || 300000,
   // Worker-death handling: with autocheckpoint=0 a dead worker means nothing checkpoints and
   // the WAL grows until the disk fills. An unexpectedly-dead worker is respawned up to
   // RespawnMax times per RespawnWindowMs (with a small backoff); if that's exhausted we

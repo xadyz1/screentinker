@@ -142,6 +142,73 @@ test('partition: the public token surface is exactly the reviewed set (snapshot 
     '/api/devices', '/api/content', '/api/folders', '/api/assignments', '/api/layouts',
     '/api/widgets', '/api/schedules', '/api/walls', '/api/reports', '/api/groups',
     '/api/playlists', '/api/activity', '/api/kiosk', '/api/pip',
+    // Trigger DEFINITIONS, added deliberately: an AV integrator provisioning a site configures these
+    // from their own tooling, so the token door is the point. Writes carry the same requireScope
+    // ('full') + role pairing as /api/pip, and reads are workspace-scoped like every sibling.
+    // ⚠️ The FIRE path is NOT here — it is device-local, because a trigger that needs this server is
+    // a trigger that fails with the WAN down. See docs/triggers-design.md.
+    '/api/triggers',
+    /*
+     * Uploaded transitions, added deliberately. Same reasoning as fonts, already on this door: it is
+     * workspace content an integrator may reasonably manage from their own tooling, and every route
+     * here is workspace-scoped like its siblings.
+     *
+     * ⚠️ Worth knowing at review time: the payload is GLSL that will execute on the GPU of every
+     * screen in that workspace. That reach is real but not new — a `write` token can already change
+     * what those screens play. It is bounded by the engine's existing failure mode (an unknown or
+     * broken shader hard-cuts, it never blanks a screen) and by validation refusing anything without
+     * the renderer's entry point, anything with a preprocessor directive, anything over 64 KB, and
+     * anything declaring more than eight parameters. Uploads are prefixed `custom-` and consulted
+     * only AFTER the shipped manifest, so no upload can shadow a built-in.
+     */
+    '/api/transitions/custom',
+    /*
+     * Slide decks, added deliberately. The deck is an AUTHORING document — it publishes to a
+     * playlist of slide widgets and then takes no part in playback — and both of those objects are
+     * already on this door, so keeping the thing that writes them off it would be a limitation with
+     * no principle behind it: an integrator generating decks from their own data is the obvious use.
+     *
+     * ⚠️ What is worth knowing at review time is that PUBLISH creates widgets and playlist items,
+     * so a `write` token here can add objects to the library. That is the same reach a write token
+     * already has against /api/widgets and /api/playlists directly, and every route is
+     * workspace-scoped through accessContext exactly as its siblings are — a deck cannot publish
+     * into, or read from, a workspace the caller is not a member of.
+     */
+    '/api/slide-decks',
+    /*
+     * Uploaded slide fonts, added deliberately. Reads and deletes are workspace-scoped through
+     * accessContext like every sibling.
+     *
+     * ⚠️ What review should weigh: an upload here is REDISTRIBUTED by this server — every screen
+     * showing a slide in that face fetches the file, from a URL that cannot be authenticated
+     * (the slide's iframe is an opaque origin and carries no credentials, the same constraint
+     * /uploads/content already lives with). The id is a uuid, so unguessable rather than secret.
+     * A `write` token can therefore put a file on this origin that the public can fetch — which is
+     * exactly what it can already do with /api/content, at larger sizes.
+     */
+    '/api/fonts',
+    /*
+     * Data sources (iCal/API feeds) for slide-template interpolation, added deliberately. The
+     * authoring value a workspace stores here is a feed URL plus the subscription config, and the
+     * objects it affects (slide decks, widgets, playlists) are already on this door, so an
+     * integrator provisioning feeds from their own tooling is the intended caller — the same
+     * reasoning that put slide-decks and triggers here.
+     *
+     * ⚠️ Two things review should weigh, both already mitigated:
+     *  1. `/test` (and background sync) fetch an OPERATOR-SUPPLIED URL. Callers can therefore cause
+     *     the server to make an outbound request, so the fetch path is SSRF-guarded (scheme
+     *     allowlist, DNS + private-IP vetting, socket pinning, per-hop redirect re-vetting), the
+     *     `/test` trigger is rate-limited to 10/min, and in-flight fetches are bounded by a
+     *     process-wide concurrency cap; errors are deliberately not echoed back (they would aid
+     *     SSRF reconnaissance). Note the actual FIRE of these feeds to screens happens on the
+     *     device/client, not here.
+     *  2. Credentials in feed URLs are stored in the workspace's data-source config and are only
+     *     readable by that workspace's members (and the server's own render path), matching the
+     *     promise siblings on this door already make.
+     */
+    '/api/data-sources',
+    '/api/approvals',
+    '/api/revisions',
   ].sort();
   assert.deepEqual(PUBLIC_ROUTERS.map(r => r.path).sort(), EXPECTED_PUBLIC);
 });

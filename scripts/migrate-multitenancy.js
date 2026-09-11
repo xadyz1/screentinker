@@ -31,7 +31,9 @@ const SERVER_DIR = path.resolve(__dirname, '..', 'server');
 // database.js - Node resolves modules relative to the required file's own
 // __dirname, not the caller's.
 const resolveFromServer = (name) => require.resolve(name, { paths: [SERVER_DIR] });
-const Database = require(resolveFromServer('better-sqlite3'));
+// Whichever driver the server itself would use — this runs on FIRST BOOT, including on a
+// player where better-sqlite3 is absent, and a miss here is a half-migrated database.
+const { Database } = require(path.join(SERVER_DIR, 'db', 'sqlite-driver.js'));
 const { v4: uuidv4 } = require(resolveFromServer('uuid'));
 const config = require(path.join(SERVER_DIR, 'config'));
 
@@ -78,6 +80,7 @@ function runMigration({ db: existingDb = null, dryRun = false, logger = console 
         default_brand_name      TEXT,
         default_logo_url        TEXT,
         default_primary_color   TEXT,
+        widget_sandbox_isolation_disabled INTEGER NOT NULL DEFAULT 0,
         created_at              INTEGER NOT NULL DEFAULT (strftime('%s','now')),
         updated_at              INTEGER NOT NULL DEFAULT (strftime('%s','now'))
       );

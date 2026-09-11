@@ -3,6 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');
+const oidcProviders = require('../lib/oidc-providers');
 const { canAdminWorkspace } = require('../lib/permissions');
 const { requirePlatformAdmin, requireAdmin } = require('../middleware/auth');
 const { logActivity, getClientIp } = require('../services/activity');
@@ -20,7 +21,9 @@ const { platformDefaultRow, HARDCODED_BRANDING, PLATFORM_DEFAULT_ID } = require(
 //     have no user/role-management power (#13).
 
 // Same email shape the invite-create endpoint validates against (workspaces.js).
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Markup characters are not legal here. The looser form admitted < > " ' and an admin-
+// chosen email became stored XSS in the platform admin's user list.
+const EMAIL_RE = /^[^\s@<>"'`\\;,()\[\]]+@[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$/;
 const WORKSPACE_ROLES = ['workspace_admin', 'workspace_editor', 'workspace_viewer'];
 // Mirror the server-side minimum enforced by PUT /api/auth/me and register.
 const MIN_PASSWORD_LENGTH = 8;
@@ -55,6 +58,53 @@ router.post('/users', (req, res) => {
   if (!canAdminWorkspace(db, req.user, ws)) {
     return res.status(403).json({ error: 'Admin access required' });
   }
+  /*
+   * ⚠️ An SSO-only organization must not have password accounts minted into it.
+   *
+   * This route creates a LOCAL account with an admin-chosen password, and it accepts any address —
+   * so on a tenant that requires single sign-on it was a one-call backdoor: create
+   * `contractor@somewhere-else.test` bound to the workspace, log in with the password, and every
+   * control the customer turned SSO-only on for is behind you. A review did exactly that, and the
+   * account it created could then mint another.
+   *
+   * platform_admin keeps the ability, because that is the operator break-glass — the same
+   * exemption the login gate makes, for the same reason.
+   */
+  if (req.user.role !== 'platform_admin' && ws.organization_id) {
+    // The table is absent on a single-tenant install; that simply means no organization requires
+    // single sign-on, so creation proceeds.
+    let org = null;
+    try { org = db.prepare('SELECT sso_only, name FROM organizations WHERE id = ?').get(ws.organization_id); }
+    catch { org = null; }
+    if (org && org.sso_only) {
+      return res.status(400).json({
+        error: `${org.name || 'This organization'} requires single sign-on, so password accounts cannot be created. Invite the person through your identity provider instead.`,
+        code: 'sso_only_org',
+      });
+    }
+  }
+
+  /*
+   * ⚠️ And the ADDRESS's own domain, wherever it is being created.
+   *
+   * Gating only on the target workspace left the squat open through a different door: create your
+   * own organization, then mint `cfo@theircompany.test` into YOUR workspace. Login is refused, so
+   * it is not access — but the row now has a password_hash, and an SSO login will not adopt a row
+   * that has one. The real CFO can then never sign in through their own identity provider, and a
+   * password reset they CAN complete lands them at a login that refuses them. Permanent, with no
+   * self-service way out, for any address at any SSO-only customer.
+   */
+  if (req.user.role !== 'platform_admin') {
+    let ownedBy = null;
+    try { ownedBy = oidcProviders.ssoOnlyForEmail(email); } catch { ownedBy = { unavailable: true }; }
+    if (ownedBy) {
+      return res.status(400).json({
+        error: 'That email domain uses single sign-on, so a password account cannot be created for it.',
+        code: 'sso_only_domain',
+      });
+    }
+  }
+
   // Stamp the target workspace so the activityLogger middleware (and our
   // explicit audit row) attribute to the right tenant.
   req.workspaceId = ws.id;
@@ -74,12 +124,18 @@ router.post('/users', (req, res) => {
   // nudge sweep already excludes them (they have a workspace_members row); we
   // additionally stamp both *_sent_at sentinels so any future sweep treats them
   // as already-handled. See services/signupEmails.js + services/activationNudge.js.
+    //
+    // email_verified = 1 for the same reason (#292). The column defaults to 0 and there is no
+    // verification flow for a user an ADMIN created - nobody sent them a link. On an instance with
+    // no SMTP configured that left them with a permanent "Please confirm your email address"
+    // banner they could not clear, fixable only by editing the database by hand. An address chosen
+    // by an administrator provisioning the account is as verified as this system can make it.
   const txn = db.transaction(() => {
     db.prepare(`
       INSERT INTO users (
         id, email, name, password_hash, auth_provider, role, plan_id,
-        must_change_password, welcome_email_sent_at, activation_nudge_sent_at
-      ) VALUES (?, ?, ?, ?, 'local', 'user', 'free', ?, strftime('%s','now'), strftime('%s','now'))
+        must_change_password, email_verified, welcome_email_sent_at, activation_nudge_sent_at
+      ) VALUES (?, ?, ?, ?, 'local', 'user', 'free', ?, 1, strftime('%s','now'), strftime('%s','now'))
     `).run(id, email, name || email.split('@')[0], passwordHash, mustChangePassword ? 1 : 0);
 
     // Same membership footprint as an accepted invite: one workspace_members
@@ -376,6 +432,50 @@ router.put('/status-debug', requirePlatformAdmin, (req, res) => {
   res.json({ enabled });
 });
 
+// ===================== Opt-in install statistics =====================
+// Returns the decision state, the EXACT payload that would be sent, and what was last actually
+// sent. Handing over the real payload rather than a description is the point: an operator can
+// check instead of trusting a sentence, and the code is public so a mismatch would be visible.
+const telemetry = require('../lib/telemetry');
+
+router.get('/telemetry', requirePlatformAdmin, (req, res) => {
+  res.json({
+    state: telemetry.state(),                 // 'unasked' | 'on' | 'off'
+    payload: telemetry.payload(db),           // what WOULD be sent, right now
+    endpoint: telemetry.endpoint(),           // ours — the host an operator may need to allowlist
+    extra_endpoint: telemetry.extraEndpoint(),// their own collector, if configured
+    destinations: telemetry.destinations(),   // everywhere it actually goes, right now
+    last_report: telemetry.getLastReport(),   // what was actually sent, and when
+    last_error: telemetry.getLastError(),     // why the last attempt failed, if it did
+  });
+});
+
+router.put('/telemetry', requirePlatformAdmin, async (req, res) => {
+  // Both answers are recorded. Declining must persist as 'off' rather than staying 'unasked',
+  // or the prompt returns after every update — which is how telemetry earns its bad name.
+  const enabled = !!req.body.enabled;
+  const state = telemetry.setEnabled(enabled);
+  logActivity(req.user.id, 'admin_set_telemetry', `enabled: ${enabled}`, null, getClientIp(req), null);
+
+  // Send once, now, rather than waiting for the next daily tick. Two reasons: the operator is
+  // standing right here and "nothing has been sent" for the next 24h reads as broken, and an
+  // egress-filtered network fails HERE where we can name the host to unblock — instead of
+  // failing silently tonight where nobody is watching.
+  let first = null;
+  if (enabled) first = await telemetry.report(db);
+
+  res.json({
+    state,
+    payload: telemetry.payload(db),
+    endpoint: telemetry.endpoint(),
+    extra_endpoint: telemetry.extraEndpoint(),
+    destinations: telemetry.destinations(),
+    first_report: first && { sent: first.sent, reason: first.reason || null },
+    last_report: telemetry.getLastReport(),
+    last_error: telemetry.getLastError(),
+  });
+});
+
 // ===================== Version update indicator =====================
 // check-update = requireAdmin — a read-only GHCR poll, operational.
 // trigger-update = requirePlatformAdmin — it runs `docker compose up -d` on the
@@ -400,17 +500,51 @@ router.post('/check-update', requireAdmin, async (req, res) => {
   }
 });
 
-// POST /api/admin/trigger-update — run docker compose pull && up -d,
-// or return manual instructions when docker is disabled.
+/*
+ * How this instance is actually installed, so "Update Now" can hand back a command that works.
+ *
+ * This used to build a `docker compose` line unconditionally, with composeFilePath defaulting to
+ * /opt/screentinker/docker-compose.yml whether or not that file existed. Self-hosters running the
+ * git + systemd install documented in docs/operations.md were therefore told to run a docker
+ * command against a compose file they do not have. One of them upgraded 1.9.39 to 2.0.8 only
+ * because he had written his own update script; the dashboard's advice was useless to him.
+ *
+ * /.dockerenv is the reliable in-container signal, and it matters because the compose file lives
+ * on the HOST, so testing for it from inside the container always fails. Outside a container, a
+ * checkout with scripts/upgrade.sh in it is the documented path and that script already does the
+ * right thing (backup, checkout the tag, npm ci --omit=dev, restart, report the running version).
+ */
+function detectInstall() {
+  const fs = require('fs');
+  const path = require('path');
+  const config = require('../config');
+  const appRoot = path.join(__dirname, '..', '..');
+  const exists = (p) => { try { return fs.existsSync(p); } catch (_) { return false; } };
+
+  if (exists('/.dockerenv') || exists(config.composeFilePath)) {
+    const f = config.composeFilePath;
+    return { kind: 'docker', command: `docker compose -f ${f} pull && docker compose -f ${f} up -d` };
+  }
+  if (exists(path.join(appRoot, '.git')) && exists(path.join(appRoot, 'scripts', 'upgrade.sh'))) {
+    return { kind: 'git', command: `cd ${appRoot} && scripts/upgrade.sh` };
+  }
+  // Say so rather than guessing. A confidently wrong command costs more than an honest shrug.
+  return { kind: 'unknown', command: null };
+}
+
+// POST /api/admin/trigger-update — run docker compose pull && up -d where this instance is
+// actually docker-managed, otherwise hand back the command that suits how it IS installed.
 router.post('/trigger-update', requirePlatformAdmin, async (req, res) => {
   const { exec } = require('child_process');
-  const composeFile = require('../config').composeFilePath;
-  const cmd = `docker compose -f ${composeFile} pull && docker compose -f ${composeFile} up -d`;
+  const install = detectInstall();
+  const cmd = install.command;
 
-  if (!require('../config').dockerUpdateEnabled) {
+  if (install.kind !== 'docker' || !require('../config').dockerUpdateEnabled) {
     return res.json({
       docker_enabled: false,
-      instructions: cmd,
+      install: install.kind,
+      instructions: cmd
+        || 'This instance was not installed in a way the server recognises, so there is no safe command to suggest. See docs/operations.md for the upgrade steps.',
     });
   }
 
@@ -424,4 +558,51 @@ router.post('/trigger-update', requirePlatformAdmin, async (req, res) => {
   });
 });
 
+// QA-SNAT diagnostic. Auth rate-limit rejections are invisible everywhere else: the limiter is
+// app.use middleware that returns 429 before the handler that would write activity_log, so the
+// limit suppresses the record of itself. This exposes the in-memory tally so "is that IP one
+// attacker or a NATed office?" can be answered from data instead of argued from a hunch.
+//
+// distinct_accounts is the signal, not rejections. Values are counts only — the identifiers are
+// salted-hashed inside the telemetry module and never leave it, so this cannot become a roster
+// of a customer's email addresses. Platform-admin only, and in-memory (a restart clears it).
+// Platform-admin plan overview. Deliberately NOT the public /api/subscription/plans list, which
+// filters `active = 1` because that is what the pricing page renders — so an intentionally hidden
+// plan (a comped or beta tier) was invisible to the operator as well as to customers, with no way
+// to see it existed or who was on it. This returns EVERY plan plus how many accounts sit on each,
+// so a hidden tier is manageable rather than folklore.
+router.get('/plans', requirePlatformAdmin, (req, res) => {
+  const plans = db.prepare(`
+    SELECT p.*,
+           (SELECT COUNT(*) FROM users u WHERE u.plan_id = p.id) AS user_count,
+           (SELECT COUNT(*) FROM organizations o WHERE o.plan_id = p.id) AS org_count,
+           (SELECT COUNT(*) FROM devices d
+              JOIN workspaces w ON w.id = d.workspace_id
+              JOIN organizations o2 ON o2.id = w.organization_id
+              JOIN users u2 ON u2.id = o2.owner_user_id
+             WHERE u2.plan_id = p.id) AS device_count
+      FROM plans p
+     ORDER BY p.active DESC, p.sort_order ASC
+  `).all();
+  // Accounts whose plan_id no longer resolves would otherwise be invisible in a per-plan view —
+  // they are the ones that actually need attention (a deleted plan leaves them with no entitlements).
+  const orphaned = db.prepare(`
+    SELECT u.plan_id, COUNT(*) AS user_count FROM users u
+     WHERE u.plan_id IS NOT NULL AND u.plan_id NOT IN (SELECT id FROM plans)
+     GROUP BY u.plan_id
+  `).all();
+  res.json({ plans, orphaned });
+});
+
+router.get('/limiter-rejections', requirePlatformAdmin, (req, res) => {
+  const rows = require('../lib/limiter-telemetry').snapshot();
+  res.json({
+    rows,
+    shared_egress_suspects: rows.filter(r => r.likelySharedEgress).length,
+    note: 'In-memory since last restart. distinct_accounts >= 3 from one IP suggests a shared egress rather than a single attacker.',
+  });
+});
+
 module.exports = router;
+module.exports.detectInstall = detectInstall;   // exported for admin-update-command.test.js
+

@@ -49,11 +49,33 @@ db.exec(`
     remote_url TEXT, user_id TEXT, folder TEXT, folder_id TEXT, workspace_id TEXT,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
   );
+  -- ⚠️ The delete handler also clears mesh provenance, because that table declares no FOREIGN KEY
+  -- and so nothing cascades it: a surviving row would point at a deleted content id, and the next
+  -- push of that asset would re-transfer the whole file and charge the allowance again. Absent from
+  -- this hand-built fixture, the DELETE threw and the route 500'd — the fixture-drift failure this
+  -- suite keeps rediscovering. See mesh-mirror-store.test.js for the guard that catches it early.
+  CREATE TABLE mesh_content_provenance (
+    origin_node_id TEXT NOT NULL, origin_content_id TEXT NOT NULL, local_content_id TEXT NOT NULL,
+    edge_id TEXT, bytes INTEGER NOT NULL DEFAULT 0,
+    first_seen_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    last_seen_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    PRIMARY KEY (origin_node_id, origin_content_id)
+  );
   -- Empty, but the DELETE handler queries these for playlist cleanup.
-  CREATE TABLE devices (id TEXT PRIMARY KEY, playlist_id TEXT);
+  -- ⚠️ The device columns here are the ones device_resolved_playlist reads. The delete fan-out
+  -- resolves inheritance rather than reading devices.playlist_id, because a screen that INHERITS
+  -- the playlist holding this content has no copy of the id on its row — and would otherwise be
+  -- left showing a file that no longer exists on disk.
+  CREATE TABLE devices (id TEXT PRIMARY KEY, playlist_id TEXT, playlist_source TEXT, wall_id TEXT, layout_id TEXT, scheduled_playlist_id TEXT, scheduled_layout_id TEXT);
   CREATE TABLE playlists (id TEXT PRIMARY KEY, workspace_id TEXT, published_snapshot TEXT);
   CREATE TABLE playlist_items (id INTEGER PRIMARY KEY AUTOINCREMENT, playlist_id TEXT, content_id TEXT);
+  CREATE TABLE video_walls (id TEXT PRIMARY KEY, playlist_id TEXT);
+  CREATE TABLE device_groups (id TEXT PRIMARY KEY, playlist_id TEXT, priority INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL DEFAULT 0);
+  CREATE TABLE device_group_members (device_id TEXT, group_id TEXT);
 `);
+// The SAME view definition the migration applies — imported, not pasted, so this fixture cannot
+// drift into proving things about a database that does not exist.
+require('../lib/playlist-resolver-sql').applyResolverViews(db);
 
 const dbModulePath = require.resolve('../db/database');
 require.cache[dbModulePath] = {
