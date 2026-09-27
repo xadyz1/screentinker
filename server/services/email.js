@@ -201,7 +201,7 @@ function escapeHtml(s) {
 }
 
 // Caller passes { to, subject, text, html } (html optional; derived from text if
-// absent). rawSubject:true sends the subject verbatim (no "[ScreenTinker] "
+// absent). rawSubject:true sends the subject verbatim (no "[SwiftDisplay] "
 // prefix). fromName overrides the display name. Returns a result object and never
 // throws — delivery failures are logged and returned as sent:false so app flow
 // (offline alerts, signup mail, etc.) keeps running even when email is broken.

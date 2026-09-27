@@ -8,8 +8,8 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="manifest" href="/manifest.json">
-  <link rel="icon" href="/assets/icon-192.png">
-  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="icon" href="/assets/swiftdisplayfavicon.png">
+  <link rel="apple-touch-icon" href="/assets/swiftdisplayappicon.png">
   <title>SwiftDisplay</title>
   
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -35,16 +35,16 @@
   <nav class="sidebar" id="sidebar">
     <div class="sidebar-header">
       <div class="logo">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-          <line x1="8" y1="21" x2="16" y2="21"/>
-          <line x1="12" y1="17" x2="12" y2="21"/>
-        </svg>
-        <span id="brandName">SwiftDisplay</span>
+        <img id="main-logo" src="/assets/logoswift.png" alt="SwiftDisplay" style="height: 40px;">
       </div>
       <!-- #38: apply cached white-label before first paint (no SwiftDisplay flash) -->
       <script src="/js/brand-prime.js"></script>
       <div class="workspace-switcher" id="workspaceSwitcher"></div>
+      <div class="sidebar-header-actions">
+        <button id="theme-toggle-dashboard" class="theme-toggle-dashboard" aria-label="Toggle dark/light theme" style="background:none;border:none;cursor:pointer;padding:8px;color:var(--text);display:flex;align-items:center;justify-content:center;">
+          <i class="fa-solid fa-moon" id="theme-toggle-icon"></i>
+        </button>
+      </div>
     </div>
     <ul class="nav-links">
       <li><a href="#/" class="nav-link active" data-view="dashboard">
@@ -205,6 +205,9 @@
       </a></li>
     </ul>
     <div class="sidebar-footer">
+      <button id="themeToggle" class="theme-toggle-btn" title="Toggle theme">
+        <i class="fa-solid fa-moon"></i>
+      </button>
       <div class="connection-status" id="connectionStatus">
         <span class="status-dot offline"></span>
         <span>Disconnected</span>
@@ -261,7 +264,7 @@
         </div>
          <div style="background:var(--bg-input,#0f172a);border-radius:6px;padding:10px 12px;margin-top:16px;border:1px solid var(--border,#1e293b)">
            <span style="font-size:11px;color:var(--text-muted,#64748b);font-weight:500" data-i18n="add_display.server_url_label">Server URL</span>
-           <code id="addDeviceServerUrl" style="display:block;font-size:13px;margin:2px 0;color:var(--primary,#3b82f6);word-break:break-all"></code>
+           <code id="addDeviceServerUrl" style="display:block;font-size:13px;margin:2px 0;color:var(--primary,#e65c00);word-break:break-all"></code>
            <span style="font-size:11px;color:var(--text-muted,#64748b)" data-i18n="add_display.server_url_hint">Use this URL when configuring the Android app</span>
          </div>
          <div style="border-top:1px solid var(--border,#1e293b);margin-top:20px;padding-top:16px">

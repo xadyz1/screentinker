@@ -407,7 +407,7 @@ router.put('/branding', requirePlatformAdmin, (req, res) => {
       PLATFORM_DEFAULT_ID, req.user.id,
       req.body.brand_name || 'SwiftDisplay',
       req.body.logo_url || null, req.body.favicon_url || null,
-      req.body.primary_color || '#3B82F6', req.body.secondary_color || '#1E293B', req.body.bg_color || '#111827',
+      req.body.primary_color || '#e65c00', req.body.secondary_color || '#1E293B', req.body.bg_color || '#111827',
       req.body.custom_css || null, req.body.hide_branding ? 1 : 0
     );
   }
@@ -592,6 +592,50 @@ router.get('/plans', requirePlatformAdmin, (req, res) => {
      GROUP BY u.plan_id
   `).all();
   res.json({ plans, orphaned });
+});
+
+router.get('/landing-settings', requirePlatformAdmin, (req, res) => {
+  const settings = db.prepare(`SELECT key, value FROM landing_settings`).all();
+  const obj = {};
+  for (const s of settings) obj[s.key] = s.value;
+  res.json({ settings: obj });
+});
+
+router.put('/landing-settings', requirePlatformAdmin, (req, res) => {
+  const allowed = ['tv_frame_url', 'ad_section_html'];
+  for (const key of allowed) {
+    if (req.body[key] !== undefined) {
+      db.prepare(`INSERT INTO landing_settings (key, value, updated_at) VALUES (?, ?, strftime('%s','now'))
+                  ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`)
+        .run(key, req.body[key]);
+    }
+  }
+  const settings = db.prepare(`SELECT key, value FROM landing_settings`).all();
+  const obj = {};
+  for (const s of settings) obj[s.key] = s.value;
+  res.json({ settings: obj });
+});
+
+router.put('/plans/:id', requirePlatformAdmin, (req, res) => {
+  const { id } = req.params;
+  const allowed = ['display_name','max_devices','max_storage_mb','remote_control','remote_url','priority_support','price_monthly','price_yearly','stripe_monthly_id','stripe_yearly_id','sort_order','active','features_en','features_pt'];
+  const updates = {};
+  for (const key of allowed) {
+    if (req.body[key] !== undefined) updates[key] = req.body[key];
+  }
+  const keys = Object.keys(updates);
+  if (keys.length === 0) return res.status(400).json({ error: 'No valid fields' });
+  const setClause = keys.map(k => `${k} = ?`).join(', ');
+  const params = keys.map(k => updates[k]);
+  params.push(id);
+  try {
+    const result = db.prepare(`UPDATE plans SET ${setClause} WHERE id = ?`).run(...params);
+    if (result.changes === 0) return res.status(404).json({ error: 'Plan not found' });
+    const plan = db.prepare(`SELECT * FROM plans WHERE id = ?`).get(id);
+    res.json({ plan });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 router.get('/limiter-rejections', requirePlatformAdmin, (req, res) => {

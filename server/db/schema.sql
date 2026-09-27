@@ -12,7 +12,9 @@ CREATE TABLE IF NOT EXISTS plans (
     stripe_monthly_id TEXT,
     stripe_yearly_id  TEXT,
     sort_order      INTEGER NOT NULL DEFAULT 0,
-    active          INTEGER NOT NULL DEFAULT 1
+    active          INTEGER NOT NULL DEFAULT 1,
+    features_en     TEXT,
+    features_pt     TEXT
 );
 
 -- Default plans
@@ -264,7 +266,7 @@ CREATE TABLE IF NOT EXISTS schedules (
     recurrence_end  TEXT,
     priority        INTEGER NOT NULL DEFAULT 0,
     enabled         INTEGER NOT NULL DEFAULT 1,
-    color           TEXT DEFAULT '#3B82F6',
+    color           TEXT DEFAULT '#e65c00',
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     CHECK ((device_id IS NOT NULL AND group_id IS NULL) OR (device_id IS NULL AND group_id IS NOT NULL))
@@ -380,7 +382,7 @@ CREATE TABLE IF NOT EXISTS device_groups (
     id              TEXT PRIMARY KEY,
     user_id         TEXT NOT NULL REFERENCES users(id),
     name            TEXT NOT NULL,
-    color           TEXT DEFAULT '#3B82F6',
+    color           TEXT DEFAULT '#e65c00',
     playlist_id     TEXT REFERENCES playlists(id) ON DELETE SET NULL,
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
@@ -460,10 +462,10 @@ CREATE INDEX IF NOT EXISTS idx_activity_log_user ON activity_log(user_id, create
 CREATE TABLE IF NOT EXISTS white_labels (
     id              TEXT PRIMARY KEY,
     user_id         TEXT NOT NULL REFERENCES users(id),
-    brand_name      TEXT NOT NULL DEFAULT 'ScreenTinker',
+    brand_name      TEXT NOT NULL DEFAULT 'SwiftDisplay',
     logo_url        TEXT,
     favicon_url     TEXT,
-    primary_color   TEXT DEFAULT '#3B82F6',
+    primary_color   TEXT DEFAULT '#e65c00',
     secondary_color TEXT DEFAULT '#1E293B',
     bg_color        TEXT DEFAULT '#111827',
     custom_domain   TEXT,
@@ -734,3 +736,16 @@ CREATE TABLE IF NOT EXISTS workspace_reviewers (
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     PRIMARY KEY (workspace_id, user_id)
 );
+
+-- ===================== LANDING PAGE SETTINGS =====================
+-- Platform-admin configurable settings for the public landing page.
+CREATE TABLE IF NOT EXISTS landing_settings (
+    key             TEXT PRIMARY KEY,
+    value           TEXT NOT NULL DEFAULT '',
+    updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+
+-- Default landing settings
+INSERT OR IGNORE INTO landing_settings (key, value) VALUES
+    ('tv_frame_url', '/demo.html'),
+    ('ad_section_html', '');

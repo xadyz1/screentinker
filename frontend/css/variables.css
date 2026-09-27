@@ -43,3 +43,26 @@
   --border-light: var(--border-highlight);
   --shadow-sm: rgba(0, 0, 0, 0.3);
 }
+
+[data-theme="light"] {
+  --bg-base: #f8fafc;
+  --bg-surface: #ffffff;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f1f5f9;
+  --bg-input: #ffffff;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+  --border: #e2e8f0;
+  --border-highlight: #cbd5e1;
+  --shadow: rgba(0, 0, 0, 0.1);
+
+  --bg-primary: var(--bg-base);
+  --bg-secondary: var(--bg-surface);
+  --radius: var(--radius-sm);
+  --success-dim: rgba(52, 211, 153, 0.15);
+  --danger-dim: rgba(239, 68, 68, 0.15);
+  --warning-dim: rgba(251, 191, 36, 0.15);
+  --border-light: var(--border-highlight);
+  --shadow-sm: rgba(0, 0, 0, 0.05);
+}

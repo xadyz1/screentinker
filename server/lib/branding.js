@@ -8,7 +8,7 @@
 //   1. the current workspace's row        (per-workspace override; unchanged)
 //   2. a custom-domain match              (public/pre-login white-label hosts)
 //   3. the platform-default row           (instance default, #15)
-//   4. hardcoded ScreenTinker fallback
+ //   4. hardcoded SwiftDisplay fallback
 //
 // The platform-default row is identified by a FIXED id (not "workspace_id IS
 // NULL"): legacy pre-multitenancy white_labels rows can also have a null
@@ -24,7 +24,7 @@ const HARDCODED_BRANDING = {
   brand_name: 'SwiftDisplay',
   logo_url: null,
   favicon_url: null,
-  primary_color: '#3B82F6',
+  primary_color: '#e65c00',
   secondary_color: '#1E293B',
   bg_color: '#111827',
   custom_css: null,

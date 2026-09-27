@@ -8,10 +8,10 @@
  * postMessage, and only what the panel can genuinely do is announced to the player, which
  * declares exactly that to the server.
  *
- * Protocol (player -> shell): { source:'screentinker-player', type:'host:hello' }
- *                             { source:'screentinker-player', type:'host:command', action, payload }
- *          (shell -> player): { source:'screentinker-host', type:'host:ready', platform, capabilities, info }
- *                             { source:'screentinker-host', type:'host:result', action, ok, error }
+ * Protocol (player -> shell): { source:'swiftdisplay-player', type:'host:hello' }
+ *                             { source:'swiftdisplay-player', type:'host:command', action, payload }
+ *          (shell -> player): { source:'swiftdisplay-host', type:'host:ready', platform, capabilities, info }
+ *                             { source:'swiftdisplay-host', type:'host:result', action, ok, error }
  */
 (function () {
   'use strict';
@@ -67,7 +67,7 @@
   // ---------------------------------------------------------------- the bridge
   function post(msg) {
     if (!frame || !frame.contentWindow) return;
-    msg.source = 'screentinker-host';
+      msg.source = 'swiftdisplay-host';
     try { frame.contentWindow.postMessage(msg, '*'); } catch (e) {}
   }
 
@@ -95,7 +95,7 @@
   window.addEventListener('message', function (ev) {
     if (!frame || ev.source !== frame.contentWindow) return;   // only our own player
     var d = ev.data;
-    if (!d || d.source !== 'screentinker-player') return;
+    if (!d || d.source !== 'swiftdisplay-player') return;
     if (d.type === 'host:hello') announce();
     else if (d.type === 'host:command' && typeof d.action === 'string') onCommand(d.action, d.payload);
   });

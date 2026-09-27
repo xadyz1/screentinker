@@ -9,7 +9,7 @@ import { renderApprovalBar } from '../components/approval-actions.js';
 /* The mime lib/html-bundle.js stamps on an uploaded HTML bundle. Kept as a constant rather than
  * spelled out at each site: it is compared in three places here, and a typo in one of them is a
  * card that renders an <img> pointed at a zip. */
-const BUNDLE_MIME = 'application/vnd.screentinker.bundle+zip';
+const BUNDLE_MIME = 'application/vnd.swiftdisplay.bundle+zip';
 
 // #216: languages offered in the caption/subtitle pickers. Codes are BCP-47 primary tags —
 // enough for signage; extend as needed.
@@ -460,7 +460,7 @@ async function loadContent() {
     grid.innerHTML = content.map(c => {
       const exp = expiryInfo(c);
       return `
-      <div class="content-item" draggable="true" data-content-id="${c.id}" data-folder="${esc(c.folder || '')}" style="position:relative;${state.selected.has(c.id) ? 'outline:2px solid var(--primary,#3B82F6);outline-offset:-2px;' : ''}${exp.expired ? 'opacity:.55' : ''}">
+      <div class="content-item" draggable="true" data-content-id="${c.id}" data-folder="${esc(c.folder || '')}" style="position:relative;${state.selected.has(c.id) ? 'outline:2px solid var(--primary,#e65c00);outline-offset:-2px;' : ''}${exp.expired ? 'opacity:.55' : ''}">
         <label class="content-select-wrap" style="position:absolute;top:6px;left:6px;z-index:2;background:rgba(0,0,0,.55);border-radius:4px;padding:3px;display:flex;cursor:pointer">
           <input type="checkbox" class="content-select" data-content-id="${c.id}" ${state.selected.has(c.id) ? 'checked' : ''} style="width:16px;height:16px;margin:0;cursor:pointer">
         </label>

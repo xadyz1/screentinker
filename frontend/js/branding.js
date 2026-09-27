@@ -41,10 +41,15 @@ export async function applyBranding() {
     if (meta) meta.setAttribute('content', wl.bg_color);
   }
 
+  if (wl.logo_url) {
+    const logo = document.getElementById('main-logo');
+    if (logo) logo.src = wl.logo_url;
+  }
+
   if (wl.brand_name) {
     document.title = wl.brand_name;
     // Publish it for i18n: strings say {brandName} and read this at call time (#292).
-    window.__ST_BRAND_NAME = wl.brand_name;
+    window.__SD_BRAND_NAME = wl.brand_name;
     const span = document.getElementById('brandName');
     if (span) span.textContent = wl.brand_name;
   }

@@ -123,6 +123,12 @@ export async function render(container) {
     </div>
 
     <div class="settings-section">
+      <h3>${t('admin.landing.title')}</h3>
+      <p style="color:var(--text-muted);font-size:12px;margin-bottom:12px">${t('admin.landing.desc')}</p>
+      <div id="landingSettingsForm"><p style="color:var(--text-muted)">${t('common.loading')}</p></div>
+    </div>
+
+    <div class="settings-section">
       <h3>${t('admin.plans')}</h3>
       <div id="plansTable"><p style="color:var(--text-muted)">${t('common.loading')}</p></div>
     </div>
@@ -136,12 +142,74 @@ export async function render(container) {
       <h3>Status endpoint</h3>
       <div id="statusDebugForm"><p style="color:var(--text-muted)">${t('common.loading')}</p></div>
     </div>
-  `;
+   `;
 
-  // Add User (#10): platform admin provisions a user into ANY workspace. The
-  // page is platform_admin-gated; the modal opens in picker mode (no fixed
-  // workspace) so the admin chooses the target org/workspace. The endpoint
-  // additionally enforces canAdminWorkspace (platform_admin passes everywhere).
+  const modal = document.createElement('div');
+  modal.id = 'planEditorModal';
+  modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);display:none;align-items:center;justify-content:center;z-index:1000;';
+  modal.innerHTML = `
+    <div style="background:#1a1a1e;border-radius:1rem;padding:2rem;max-width:520px;width:90%;max-height:85vh;overflow-y:auto;border:1px solid var(--border);box-shadow:var(--shadow-lg)">
+      <h3 style="font-size:1.25rem;margin-bottom:1.25rem">${t('admin.plan_edit')}</h3>
+      <input type="hidden" id="planEditorId">
+      <div style="display:grid;gap:1rem;margin-bottom:1.5rem">
+        <div>
+          <label style="display:block;font-size:13px;color:var(--text-secondary);margin-bottom:4px">${t('admin.plan')} (display name)</label>
+          <input id="edit_display_name" type="text" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:0.5rem;background:var(--card-bg);color:var(--text)">
+        </div>
+        <div>
+          <label style="display:block;font-size:13px;color:var(--text-secondary);margin-bottom:4px">Stripe Monthly Price ID</label>
+          <input id="edit_stripe_monthly" type="text" placeholder="price_..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:0.5rem;background:var(--card-bg);color:var(--text);font-family:monospace;font-size:12px">
+        </div>
+        <div>
+          <label style="display:block;font-size:13px;color:var(--text-secondary);margin-bottom:4px">Stripe Yearly Price ID</label>
+          <input id="edit_stripe_yearly" type="text" placeholder="price_..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:0.5rem;background:var(--card-bg);color:var(--text);font-family:monospace;font-size:12px">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+          <div>
+            <label style="display:block;font-size:13px;color:var(--text-secondary);margin-bottom:4px">${t('admin.col.monthly')} ($)</label>
+            <input id="edit_price_monthly" type="number" step="0.01" min="0" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:0.5rem;background:var(--card-bg);color:var(--text)">
+          </div>
+          <div>
+            <label style="display:block;font-size:13px;color:var(--text-secondary);margin-bottom:4px">${t('admin.col.yearly')} ($)</label>
+            <input id="edit_price_yearly" type="number" step="0.01" min="0" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:0.5rem;background:var(--card-bg);color:var(--text)">
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+          <div>
+            <label style="display:block;font-size:13px;color:var(--text-secondary);margin-bottom:4px">Max Devices (-1 = unlimited)</label>
+            <input id="edit_max_devices" type="number" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:0.5rem;background:var(--card-bg);color:var(--text)">
+          </div>
+          <div>
+            <label style="display:block;font-size:13px;color:var(--text-secondary);margin-bottom:4px">Max Storage MB (-1 = unlimited)</label>
+            <input id="edit_max_storage" type="number" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:0.5rem;background:var(--card-bg);color:var(--text)">
+          </div>
+        </div>
+        <div>
+          <label style="display:block;font-size:13px;color:var(--text-secondary);margin-bottom:4px">Features (EN) - JSON array</label>
+          <textarea id="edit_features_en" rows="3" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:0.5rem;background:var(--card-bg);color:var(--text);font-family:monospace;font-size:12px" placeholder='["Unlimited content", "Standard support"]'></textarea>
+          <p style="font-size:11px;color:var(--text-muted);margin-top:4px">Enter features as a JSON array of strings</p>
+        </div>
+        <div>
+          <label style="display:block;font-size:13px;color:var(--text-secondary);margin-bottom:4px">Features (PT) - JSON array</label>
+          <textarea id="edit_features_pt" rows="3" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:0.5rem;background:var(--card-bg);color:var(--text);font-family:monospace;font-size:12px" placeholder='["Conteúdo ilimitado", "Suporte padrão"]'></textarea>
+          <p style="font-size:11px;color:var(--text-muted);margin-top:4px">Insira as funcionalidades como array JSON de strings</p>
+        </div>
+        <div>
+          <label style="display:block;font-size:13px;color:var(--text-secondary);margin-bottom:4px">Active (1/0)</label>
+          <select id="edit_active" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:0.5rem;background:var(--card-bg);color:var(--text)">
+            <option value="1">Active</option>
+            <option value="0">Hidden</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:flex;gap:1rem;justify-content:flex-end">
+        <button class="btn btn-secondary" onclick="document.getElementById('planEditorModal').style.display='none'" style="font-size:13px">${t('common.cancel')}</button>
+        <button class="btn btn-secondary" onclick="savePlanEdit()" style="font-size:13px">${t('common.save')}</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
   document.getElementById('adminAddUserBtn')?.addEventListener('click', () => {
     openAddUserModal(null, {
       onSuccess: (result) => {
@@ -167,6 +235,7 @@ export async function render(container) {
   wireDiagnostics();
   loadSsoOnlyRequests();
   loadBranding();
+  loadLandingSettings();
   loadPlans();
   loadSystem();
   loadStatusDebug();
@@ -318,7 +387,7 @@ async function loadBranding() {
   el.innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;max-width:640px">
       <div class="form-group" style="grid-column:1/-1"><label>${t('admin.branding.brand_name')}</label><input type="text" id="brBrandName" class="input" placeholder="SwiftDisplay" value="${v(b.brand_name)}"></div>
-      <div class="form-group"><label>${t('admin.branding.primary_color')}</label><input type="text" id="brPrimary" class="input" placeholder="#3B82F6" value="${v(b.primary_color)}"></div>
+      <div class="form-group"><label>${t('admin.branding.primary_color')}</label><input type="text" id="brPrimary" class="input" placeholder="#e65c00" value="${v(b.primary_color)}"></div>
       <div class="form-group"><label>${t('admin.branding.bg_color')}</label><input type="text" id="brBg" class="input" placeholder="#111827" value="${v(b.bg_color)}"></div>
       <div class="form-group" style="grid-column:1/-1"><label>${t('admin.branding.logo_url')}</label><input type="text" id="brLogo" class="input" placeholder="https://…/logo.png" value="${v(b.logo_url)}"></div>
       <div class="form-group" style="grid-column:1/-1"><label>${t('admin.branding.favicon_url')}</label><input type="text" id="brFavicon" class="input" placeholder="https://…/favicon.ico" value="${v(b.favicon_url)}"></div>
@@ -343,6 +412,51 @@ async function loadBranding() {
       showToast(t('admin.branding.saved'), 'success');
     } catch (err) { showToast(err.message, 'error'); }
   };
+}
+
+async function loadLandingSettings() {
+  const el = document.getElementById('landingSettingsForm');
+  if (!el) return;
+  try {
+    const { settings } = await api.adminGetLandingSettings();
+    const tvFrameUrl = settings.tv_frame_url || '/demo.html';
+    const adSectionHtml = settings.ad_section_html || '';
+    el.innerHTML = `
+      <div style="display:grid;gap:1rem;max-width:800px">
+        <div class="form-group">
+          <label>${t('admin.landing.tv_frame_url')}</label>
+          <input type="url" id="lsTvFrameUrl" class="input" placeholder="/demo.html" value="${esc(tvFrameUrl)}" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:0.5rem;background:var(--card-bg);color:var(--text);font-family:monospace;font-size:13px">
+          <p style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('admin.landing.tv_frame_url_hint')}</p>
+        </div>
+        <div class="form-group">
+          <label>${t('admin.landing.ad_section_html')}</label>
+          <textarea id="lsAdSectionHtml" class="input" rows="10" placeholder="<div class='ad-banner'>...</div>" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:0.5rem;background:var(--card-bg);color:var(--text);font-family:monospace;font-size:13px">${esc(adSectionHtml)}</textarea>
+          <p style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('admin.landing.ad_section_html_hint')}</p>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-primary btn-sm" id="lsSave">${t('common.save')}</button>
+        <button class="btn btn-secondary btn-sm" id="lsPreview">${t('admin.landing.preview')}</button>
+      </div>
+    `;
+    document.getElementById('lsSave').onclick = async () => {
+      try {
+        await api.adminUpdateLandingSettings({
+          tv_frame_url: document.getElementById('lsTvFrameUrl').value.trim() || '/demo.html',
+          ad_section_html: document.getElementById('lsAdSectionHtml').value,
+        });
+        showToast(t('admin.landing.saved'), 'success');
+      } catch (err) { showToast(err.message, 'error'); }
+    };
+    document.getElementById('lsPreview').onclick = () => {
+      const html = document.getElementById('lsAdSectionHtml').value;
+      const win = window.open('', '_blank', 'width=800,height=600');
+      win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ad Section Preview</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Arimo:wght@400;500;700&family=Bakbak+One&display=swap" rel="stylesheet"><style>body{font-family: 'Arimo', sans-serif;background:#f8fafc;padding:2rem}</style></head><body>${html}</body></html>`);
+      win.document.close();
+    };
+  } catch (err) {
+    el.innerHTML = `<p style="color:var(--danger)">${esc(err.message)}</p>`;
+  }
 }
 
 async function loadUsers() {
@@ -490,20 +604,22 @@ async function loadPlans() {
     // operator too. Here we want every plan, plus who is actually on each one.
     const { plans, orphaned } = await api.adminListPlans();
     el.innerHTML = `
-      <div class="table-wrap">
-      <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:500px">
+      <div class="table-wrap" style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:720px">
         <thead><tr style="border-bottom:1px solid var(--border)">
           <th style="padding:8px;text-align:left;color:var(--text-muted)">${t('admin.col.plan')}</th>
           <th style="padding:8px;text-align:right;color:var(--text-muted)">${t('admin.col.devices')}</th>
           <th style="padding:8px;text-align:right;color:var(--text-muted)">${t('admin.col.storage')}</th>
           <th style="padding:8px;text-align:right;color:var(--text-muted)">${t('admin.col.monthly')}</th>
-          <th style="padding:8px;text-align:right;color:var(--text-muted)">${t('admin.col.yearly')}</th>
+          <th style="padding:8px;text-align:right;color:var(--text-muted)">${t('admin.col.monthly_stripe')}</th>          <th style="padding:8px;text-align:right;color:var(--text-muted)">${t('admin.col.yearly')}</th>
+          <th style="padding:8px;text-align:right;color:var(--text-muted)">${t('admin.col.yearly_stripe')}</th>
           <th style="padding:8px;text-align:right;color:var(--text-muted)">${t('admin.col.accounts')}</th>
           <th style="padding:8px;text-align:right;color:var(--text-muted)">${t('admin.col.screens')}</th>
+          <th style="padding:8px;text-align:center;color:var(--text-muted)">${t('admin.col.actions')}</th>
         </tr></thead>
         <tbody>
           ${plans.map(p => `
-            <tr style="border-bottom:1px solid var(--border)${p.active ? '' : ';opacity:.7'}">
+            <tr style="border-bottom:1px solid var(--border)${p.active ? '' : ';opacity:.7'}" data-plan-id="${p.id}">
               <td style="padding:8px;font-weight:500">${esc(p.display_name)}
                 <span style="color:var(--text-muted);font-weight:400;font-size:11px">${esc(p.id)}</span>
                 ${p.active ? '' : `<span style="margin-left:6px;font-size:10px;padding:1px 6px;border:1px solid var(--border);border-radius:8px;color:var(--text-muted)">${t('admin.plan_hidden')}</span>`}
@@ -511,9 +627,12 @@ async function loadPlans() {
               <td style="padding:8px;text-align:right">${p.max_devices === -1 ? t('admin.unlimited') : p.max_devices}</td>
               <td style="padding:8px;text-align:right">${p.max_storage_mb === -1 ? t('admin.unlimited') : p.max_storage_mb >= 1024 ? (p.max_storage_mb/1024)+'GB' : p.max_storage_mb+'MB'}</td>
               <td style="padding:8px;text-align:right">${p.price_monthly > 0 ? '$'+p.price_monthly : t('admin.free')}</td>
+              <td style="padding:8px;text-align:right;font-family:monospace;font-size:11px" title="${esc(p.stripe_monthly_id || '')}">${esc(p.stripe_monthly_id ? p.stripe_monthly_id.substring(0,20) + (p.stripe_monthly_id.length > 20 ? '...' : '') : '-')}</td>
               <td style="padding:8px;text-align:right">${p.price_yearly > 0 ? '$'+p.price_yearly : '-'}</td>
+              <td style="padding:8px;text-align:right;font-family:monospace;font-size:11px" title="${esc(p.stripe_yearly_id || '')}">${esc(p.stripe_yearly_id ? p.stripe_yearly_id.substring(0,20) + (p.stripe_yearly_id.length > 20 ? '...' : '') : '-')}</td>
               <td style="padding:8px;text-align:right${p.user_count ? ';font-weight:500' : ';color:var(--text-muted)'}">${p.user_count}</td>
               <td style="padding:8px;text-align:right;color:var(--text-muted)">${p.device_count}</td>
+              <td style="padding:8px;text-align:center"><button class="btn btn-secondary btn-sm edit-plan-btn" style="font-size:11px;padding:4px 8px" data-plan='${esc(JSON.stringify({id:p.id,display_name:p.display_name,stripe_monthly_id:p.stripe_monthly_id||'',stripe_yearly_id:p.stripe_yearly_id||'',price_monthly:p.price_monthly,price_yearly:p.price_yearly,max_devices:p.max_devices,max_storage_mb:p.max_storage_mb,active:p.active,features_en:p.features_en||'',features_pt:p.features_pt||''}))}'>${t('common.edit')}</button></td>
             </tr>
           `).join('')}
         </tbody>
@@ -525,6 +644,65 @@ async function loadPlans() {
         </p>` : ''}
     `;
   } catch (err) { el.innerHTML = `<p style="color:var(--danger)">${esc(err.message)}</p>`; }
+}
+
+function openPlanEditor(planId, planData) {
+  document.getElementById('planEditorModal').style.display = 'flex';
+  document.getElementById('planEditorId').value = planId;
+  if (planData) {
+    document.getElementById('edit_display_name').value = planData.display_name || '';
+    document.getElementById('edit_stripe_monthly').value = planData.stripe_monthly_id || '';
+    document.getElementById('edit_stripe_yearly').value = planData.stripe_yearly_id || '';
+    document.getElementById('edit_price_monthly').value = planData.price_monthly || '';
+    document.getElementById('edit_price_yearly').value = planData.price_yearly || '';
+    document.getElementById('edit_max_devices').value = planData.max_devices || '';
+    document.getElementById('edit_max_storage').value = planData.max_storage_mb || '';
+    document.getElementById('edit_features_en').value = planData.features_en || '';
+    document.getElementById('edit_features_pt').value = planData.features_pt || '';
+    document.getElementById('edit_active').value = planData.active ? '1' : '0';
+  }
+}
+
+// Event delegation for edit buttons
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.edit-plan-btn');
+  if (btn) {
+    try {
+      const planData = JSON.parse(btn.dataset.plan);
+      openPlanEditor(planData.id, planData);
+    } catch (err) {
+      console.error('Failed to parse plan data:', err);
+    }
+  }
+});
+
+async function savePlanEdit() {
+  const planId = document.getElementById('planEditorId').value;
+  let featuresEn = document.getElementById('edit_features_en').value.trim();
+  let featuresPt = document.getElementById('edit_features_pt').value.trim();
+  // Validate JSON if provided
+  if (featuresEn) { try { JSON.parse(featuresEn); } catch { showToast('Features EN must be valid JSON array', 'error'); return; } }
+  if (featuresPt) { try { JSON.parse(featuresPt); } catch { showToast('Features PT must be valid JSON array', 'error'); return; } }
+  const data = {
+    display_name: document.getElementById('edit_display_name').value,
+    stripe_monthly_id: document.getElementById('edit_stripe_monthly').value || null,
+    stripe_yearly_id: document.getElementById('edit_stripe_yearly').value || null,
+    price_monthly: parseFloat(document.getElementById('edit_price_monthly').value) || 0,
+    price_yearly: parseFloat(document.getElementById('edit_price_yearly').value) || 0,
+    max_devices: parseInt(document.getElementById('edit_max_devices').value) || -1,
+    max_storage_mb: parseInt(document.getElementById('edit_max_storage').value) || -1,
+    features_en: featuresEn || null,
+    features_pt: featuresPt || null,
+    active: document.getElementById('edit_active').value === '1' ? 1 : 0
+  };
+  try {
+    await api.adminUpdatePlan(planId, data);
+    showToast(t('admin.toast.plan_updated'), 'success');
+    document.getElementById('planEditorModal').style.display = 'none';
+    await loadPlans();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
 }
 
 async function loadSystem() {
@@ -744,7 +922,7 @@ function wireDiagnostics() {
     const blob = new Blob([JSON.stringify(lastProfile)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `screentinker-${new Date().toISOString().replace(/[:.]/g, '-')}.cpuprofile`;
+    a.download = `swiftdisplay-${new Date().toISOString().replace(/[:.]/g, '-')}.cpuprofile`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   });

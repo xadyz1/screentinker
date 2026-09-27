@@ -739,7 +739,7 @@
      * Which sync protocol this deployment runs. Resolved by the server
      * (server/lib/sync-backend.js) and pushed down; the registry holds the last known value so
      * a cold boot with no network still starts in the right mode.
-     *   'screentinker' — our clock-derived group sync; the only option in a mixed fleet.
+     *   'swiftdisplay' — our clock-derived group sync; the only option in a mixed fleet.
      *   'brightsign'   — native BrightWall; the host drives it over the bridge.
      */
     syncBackend: function () {

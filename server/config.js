@@ -181,7 +181,7 @@ module.exports = {
   // Off by default, because the default is the safe one — on a managed panel the install
   // confirm dialog can't be reliably auto-dismissed and ends up sitting over customer content,
   // and the MDM is normally the thing that pushes packages. Set this only when you run an MDM
-  // that does NOT distribute the player and you want ScreenTinker's OTA to own updates instead.
+  // that does NOT distribute the player and you want SwiftDisplay's OTA to own updates instead.
   // Advertised to players in /api/update/check as `allow_managed`; a player that doesn't
   // understand the field simply keeps its own behaviour.
   otaAllowManagedDevices: ['true', '1'].includes(String(process.env.OTA_ALLOW_MANAGED_DEVICES || '').toLowerCase()),
@@ -425,7 +425,7 @@ module.exports = {
   // anonymous token flow. All optional with safe defaults.
   dockerUpdateEnabled: process.env.DOCKER_UPDATE_ENABLED === 'true',
   ghcrCheckIntervalHours: parseInt(process.env.GHCR_CHECK_INTERVAL_HOURS) || 36,
-  composeFilePath: process.env.COMPOSE_FILE_PATH || '/opt/screentinker/docker-compose.yml',
+  composeFilePath: process.env.COMPOSE_FILE_PATH || '/opt/swiftdisplay/docker-compose.yml',
 
   // #143 fingerprint-reclaim liveness. A reinstalled app (same fingerprint, no
   // device_id, has pairing_code) may reclaim its old device's identity once that

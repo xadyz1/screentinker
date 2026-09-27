@@ -91,7 +91,6 @@ export async function render(container) {
       <div style="width:400px;max-width:100%">
         <div style="text-align:center;margin-bottom:32px">
           ${logoHtml}
-          <h1 style="font-size:24px;font-weight:700;color:var(--accent)">${brandEsc(brandName)}</h1>
           <p style="color:var(--text-secondary);font-size:13px;margin-top:4px">
             ${isSetup ? t('auth.subtitle_setup') : t('auth.subtitle_signin')}
           </p>

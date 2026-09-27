@@ -191,7 +191,7 @@ export async function render(container) {
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
           <div class="form-group"><label>${t('settings.brand_name')}</label><input type="text" id="wlBrandName" class="input" placeholder="SwiftDisplay"></div>
           <div class="form-group"><label>${t('settings.logo_url')}</label><input type="text" id="wlLogoUrl" class="input" placeholder="https://..."></div>
-          <div class="form-group"><label>${t('settings.primary_color')}</label><input type="color" id="wlPrimaryColor" value="#3B82F6" style="width:100%;height:36px;border:none;cursor:pointer;border-radius:var(--radius)"></div>
+          <div class="form-group"><label>${t('settings.primary_color')}</label><input type="color" id="wlPrimaryColor" value="#e65c00" style="width:100%;height:36px;border:none;cursor:pointer;border-radius:var(--radius)"></div>
           <div class="form-group"><label>${t('settings.bg_color')}</label><input type="color" id="wlBgColor" value="#111827" style="width:100%;height:36px;border:none;cursor:pointer;border-radius:var(--radius)"></div>
           <div class="form-group"><label>${t('settings.custom_domain')}</label><input type="text" id="wlDomain" class="input" placeholder="signage.yourcompany.com"></div>
           <div class="form-group"><label>${t('settings.favicon_url')}</label><input type="text" id="wlFavicon" class="input" placeholder="https://..."></div>
@@ -341,12 +341,12 @@ export async function render(container) {
       let data;
       if (isZip) {
         // For ZIP, show basic info and skip preview parsing
-        data = { format: 'screentinker-export-v1', _isZip: true };
+        data = { format: 'swiftdisplay-export-v1', _isZip: true };
         statusEl.innerHTML = `${t('settings.import.zip_detected', { name: esc(file.name), size: (file.size / 1048576).toFixed(1) })}<br><br><button class="btn btn-primary btn-sm" id="confirmImportBtn">${t('settings.import.confirm')}</button> <button class="btn btn-secondary btn-sm" id="cancelImportBtn">${t('common.cancel')}</button>`;
       } else {
         const text = await file.text();
         data = JSON.parse(text);
-        if (!data.format || !data.format.startsWith('screentinker-export')) {
+        if (!data.format || !(data.format.startsWith('screentinker-export') || data.format.startsWith('swiftdisplay-export'))) {
           statusEl.style.color = 'var(--danger)';
           statusEl.textContent = t('settings.import.invalid_file');
           return;
@@ -807,7 +807,7 @@ export async function render(container) {
         const blob = new Blob([text + '\n'], { type: 'text/plain' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = 'screentinker-recovery-codes.txt';
+        a.download = 'swiftdisplay-recovery-codes.txt';
         a.click();
         URL.revokeObjectURL(a.href);
       });
@@ -1448,17 +1448,17 @@ function openWidgetSandboxDisableConfirmModal(confirmationPhrase) {
         <div class="modal-body" style="white-space:pre-wrap;line-height:1.45">
 Widget HTML currently runs in a null-origin sandbox. That means widget code
 cannot read your session, your cookies, or anything else stored by
-ScreenTinker in this browser.
+SwiftDisplay in this browser.
 
 Turning this off re-enables allow-same-origin. Widget HTML will then run with
-the same privileges as ScreenTinker itself. Any script in any widget in this
+the same privileges as SwiftDisplay itself. Any script in any widget in this
 organization will be able to:
 
   - Read the device token of every display that shows the widget, and act as
-    that display against the ScreenTinker API
+    that display against the SwiftDisplay API
   - Read the session token of any logged-in user who opens a display in their
     own browser
-  - Call the ScreenTinker API as that user, including admin actions
+  - Call the SwiftDisplay API as that user, including admin actions
   - Read and modify content on every other display in this organization
   - Silently exfiltrate all of the above to any server it likes
 

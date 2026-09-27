@@ -367,7 +367,7 @@ function resolveGroupSync(device, deviceId) {
   let reason = decision.reason;
   let downgraded = decision.downgraded;
   if (backend === 'brightsign' && !leaderOnline) {
-    backend = 'screentinker';
+    backend = 'swiftdisplay';
     reason = 'the group leader is offline — native sync has nobody to broadcast';
     downgraded = true;
   }

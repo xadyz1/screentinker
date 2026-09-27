@@ -40,7 +40,7 @@ test('normalizeDesign: converts pixel shape dims to %, clamps ranges', () => {
   assert.equal(s.y, 0, 'y clamped so full-height shape fits (y+height<=100)');
   assert.ok(Math.abs(s.width - 100) < 0.01, '1920px -> 100%');
   assert.ok(Math.abs(s.height - 100) < 0.01, '1080px -> 100%');
-  assert.equal(s.color, '#3b82f6', 'non-hex color -> default');
+  assert.equal(s.color, '#e65c00', 'non-hex color -> default');
   assert.equal(s.opacity, 1, 'opacity clamped to 1');
 });
 

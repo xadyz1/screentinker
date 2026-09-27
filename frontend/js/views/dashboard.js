@@ -9,6 +9,44 @@ import { showDeviceOwnerQRModal } from '../components/device-owner-qr-modal.js';
 import { frameDeviceOutput } from '../lib/device-frame.js';
 import { selectedRemoteOrg } from '../components/workspace-switcher.js';
 
+// Theme toggle initialization for dashboard
+function initThemeToggle() {
+  const themeBtn = document.getElementById('theme-toggle-dashboard');
+  const themeIcon = document.getElementById('theme-toggle-icon');
+  const logo = document.getElementById('main-logo');
+
+  if (!themeBtn || !themeIcon) return;
+
+  const applyTheme = (theme) => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('sd_theme', theme);
+    themeIcon.className = theme === 'dark' ? 'fa-solid fa-sun' : 'fa-solid fa-moon';
+    // Switch logo based on theme
+    if (logo) {
+      logo.src = theme === 'dark' ? '/assets/logowhiteswift.png' : '/assets/logoswift.png';
+    }
+  };
+
+  // Initialize from localStorage or system preference
+  const savedTheme = localStorage.getItem('sd_theme');
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const initialTheme = savedTheme || (prefersDark ? 'dark' : 'light');
+  applyTheme(initialTheme);
+
+  themeBtn.addEventListener('click', () => {
+    const current = document.documentElement.getAttribute('data-theme');
+    const next = current === 'dark' ? 'light' : 'dark';
+    applyTheme(next);
+  });
+
+  // Listen for system theme changes
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+    if (!localStorage.getItem('sd_theme')) {
+      applyTheme(e.matches ? 'dark' : 'light');
+    }
+  });
+}
+
 const DESTRUCTIVE_COMMANDS = ['reboot', 'shutdown'];
 // Command types only — labels resolved through t('dashboard.cmd.<type>')
 const GROUP_COMMANDS = [
@@ -266,7 +304,7 @@ function renderGroupSection(group, devices, playlists) {
   const playlistLabel = getGroupPlaylistLabel(devices, playlists);
   return `
     <div class="group-section" data-group-id="${group.id}" style="margin-bottom:24px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding:8px 12px;background:var(--bg-secondary);border-radius:8px;border-left:4px solid ${esc(group.color || '#3B82F6')}">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding:8px 12px;background:var(--bg-secondary);border-radius:8px;border-left:4px solid ${esc(group.color || '#e65c00')}">
         <div style="display:flex;align-items:center;gap:10px">
           <strong style="font-size:15px">${esc(group.name)}</strong>
           <span style="color:var(--text-muted);font-size:12px">${tn('dashboard.devices_count', devices.length)} &middot; ${t('dashboard.online_count', { n: onlineCount })}</span>
@@ -290,7 +328,7 @@ function renderGroupSection(group, devices, playlists) {
           ${group.sync_enabled ? `
           <select class="input group-backend-select" data-group-id="${group.id}" style="width:130px;padding:4px 8px;font-size:12px;background:var(--bg-input)" title="${esc(t('dashboard.group_sync.backend_hint'))}">
             <option value="auto" ${(group.sync_backend || 'auto') === 'auto' ? 'selected' : ''}>${t('dashboard.group_sync.backend_auto')}</option>
-            <option value="screentinker" ${group.sync_backend === 'screentinker' ? 'selected' : ''}>${t('dashboard.group_sync.backend_screentinker')}</option>
+            <option value="swiftdisplay" ${group.sync_backend === 'swiftdisplay' || group.sync_backend === 'screentinker' ? 'selected' : ''}>${t('dashboard.group_sync.backend_screentinker')}</option>
             <option value="brightsign" ${group.sync_backend === 'brightsign' ? 'selected' : ''}>${t('dashboard.group_sync.backend_brightsign')}</option>
           </select>
           ${group.sync_effective ? `
@@ -417,7 +455,7 @@ export function render(container) {
         <h1>${t('dashboard.title')} <span class="help-tip" data-tip="${t('dashboard.help_tip')}">?</span></h1>
         <div class="subtitle">${t('dashboard.subtitle')}</div>
       </div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;align-items:center">
         <button class="btn btn-primary" id="addDeviceBtn">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
@@ -445,6 +483,9 @@ export function render(container) {
     </div>
     <div id="groupedDevices"></div>
   `;
+
+  // Initialize theme toggle
+  initThemeToggle();
 
   const addBtn = container.querySelector('#addDeviceBtn');
   addBtn.addEventListener('click', () => {

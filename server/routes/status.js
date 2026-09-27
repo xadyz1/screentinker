@@ -194,7 +194,7 @@ router.get('/export', (req, res) => {
   const whiteLabel = workspaceId ? db.prepare('SELECT * FROM white_labels WHERE workspace_id = ?').get(workspaceId) : null;
 
   const exportData = {
-    format: 'screentinker-export-v2',
+    format: 'swiftdisplay-export-v2',
     exported_at: new Date().toISOString(),
     user,
     devices: devices.map(d => {
@@ -225,7 +225,7 @@ router.get('/export', (req, res) => {
     const archiver = require('archiver');
     const dateStr = new Date().toISOString().split('T')[0];
     res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename=screentinker-export-${dateStr}.zip`);
+    res.setHeader('Content-Disposition', `attachment; filename=swiftdisplay-export-${dateStr}.zip`);
 
     const archive = archiver('zip', { zlib: { level: 5 } });
     archive.pipe(res);
@@ -258,13 +258,13 @@ router.get('/export', (req, res) => {
   }
 
   res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Content-Disposition', `attachment; filename=screentinker-export-${new Date().toISOString().split('T')[0]}.json`);
+  res.setHeader('Content-Disposition', `attachment; filename=swiftdisplay-export-${new Date().toISOString().split('T')[0]}.json`);
   res.json(exportData);
 });
 
 // User data import (JSON or ZIP with files)
 const multer = require('multer');
-const importUpload = multer({ dest: path.join(os.tmpdir(), 'screentinker-import'), limits: { fileSize: 2 * 1024 * 1024 * 1024 } }); // 2GB max
+  const importUpload = multer({ dest: path.join(os.tmpdir(), 'swiftdisplay-import'), limits: { fileSize: 2 * 1024 * 1024 * 1024 } }); // 2GB max
 
 router.post('/import', importUpload.single('file'), async (req, res) => {
   const authHeader = req.headers.authorization;
@@ -351,11 +351,11 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
   } else {
     data = req.body;
   }
-  if (!data || !data.format || !data.format.startsWith('screentinker-export')) {
-    return res.status(400).json({ error: 'Invalid export file. Must be a ScreenTinker export JSON.' });
+  if (!data || !data.format || !(data.format.startsWith('screentinker-export') || data.format.startsWith('swiftdisplay-export'))) {
+    return res.status(400).json({ error: 'Invalid export file. Must be a SwiftDisplay export JSON.' });
   }
 
-  const isV2 = data.format === 'screentinker-export-v2';
+  const isV2 = data.format === 'swiftdisplay-export-v2' || data.format === 'screentinker-export-v2';
   const uuid = require('uuid');
   const stats = { devices: 0, content: 0, widgets: 0, layouts: 0, playlists: 0, schedules: 0, video_walls: 0, kiosk_pages: 0, device_groups: 0 };
 
@@ -519,7 +519,7 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
       if (!devId && !grpId) continue;
       const newId = uuid.v4();
       const playlistId = s.playlist_id ? (idMap.playlists[s.playlist_id] || null) : null;
-      db.prepare(`INSERT INTO schedules (id, user_id, device_id, group_id, zone_id, content_id, widget_id, layout_id, playlist_id, title, start_time, end_time, timezone, recurrence, recurrence_end, priority, enabled, color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(newId, userId, devId, grpId, s.zone_id ? (idMap.zones[s.zone_id] || null) : null, s.content_id ? (idMap.content[s.content_id] || null) : null, s.widget_id ? (idMap.widgets[s.widget_id] || null) : null, s.layout_id ? (idMap.layouts[s.layout_id] || null) : null, playlistId, s.title || '', s.start_time, s.end_time, s.timezone || 'UTC', s.recurrence || null, s.recurrence_end || null, s.priority || 0, s.enabled !== undefined ? s.enabled : 1, s.color || '#3B82F6', s.created_at || Math.floor(Date.now() / 1000));
+      db.prepare(`INSERT INTO schedules (id, user_id, device_id, group_id, zone_id, content_id, widget_id, layout_id, playlist_id, title, start_time, end_time, timezone, recurrence, recurrence_end, priority, enabled, color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(newId, userId, devId, grpId, s.zone_id ? (idMap.zones[s.zone_id] || null) : null, s.content_id ? (idMap.content[s.content_id] || null) : null, s.widget_id ? (idMap.widgets[s.widget_id] || null) : null, s.layout_id ? (idMap.layouts[s.layout_id] || null) : null, playlistId, s.title || '', s.start_time, s.end_time, s.timezone || 'UTC', s.recurrence || null, s.recurrence_end || null, s.priority || 0, s.enabled !== undefined ? s.enabled : 1, s.color || '#e65c00', s.created_at || Math.floor(Date.now() / 1000));
       stats.schedules++;
     }
 
@@ -554,7 +554,7 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
     for (const g of (data.device_groups || [])) {
       const newId = uuid.v4();
       idMap.groups[g.id] = newId;
-      db.prepare(`INSERT INTO device_groups (id, user_id, workspace_id, name, color, created_at) VALUES (?, ?, ?, ?, ?, ?)`).run(newId, userId, workspaceId, g.name, g.color || '#3B82F6', g.created_at || Math.floor(Date.now() / 1000));
+      db.prepare(`INSERT INTO device_groups (id, user_id, workspace_id, name, color, created_at) VALUES (?, ?, ?, ?, ?, ?)`).run(newId, userId, workspaceId, g.name, g.color || '#e65c00', g.created_at || Math.floor(Date.now() / 1000));
       stats.device_groups++;
     }
     for (const gm of (data.device_group_members || [])) {
@@ -576,9 +576,9 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
       const wl = data.white_label;
       const existing = db.prepare('SELECT id FROM white_labels WHERE workspace_id = ?').get(workspaceId);
       if (existing) {
-        db.prepare(`UPDATE white_labels SET brand_name=?, logo_url=?, favicon_url=?, primary_color=?, bg_color=?, custom_domain=?, custom_css=?, hide_branding=?, updated_at=strftime('%s','now') WHERE workspace_id=?`).run(wl.brand_name || 'SwiftDisplay', wl.logo_url || null, wl.favicon_url || null, wl.primary_color || '#3B82F6', wl.bg_color || '#111827', wl.custom_domain || null, wl.custom_css || null, wl.hide_branding || 0, workspaceId);
+        db.prepare(`UPDATE white_labels SET brand_name=?, logo_url=?, favicon_url=?, primary_color=?, bg_color=?, custom_domain=?, custom_css=?, hide_branding=?, updated_at=strftime('%s','now') WHERE workspace_id=?`).run(wl.brand_name || 'SwiftDisplay', wl.logo_url || null, wl.favicon_url || null, wl.primary_color || '#e65c00', wl.bg_color || '#111827', wl.custom_domain || null, wl.custom_css || null, wl.hide_branding || 0, workspaceId);
       } else {
-        db.prepare(`INSERT INTO white_labels (id, user_id, workspace_id, brand_name, logo_url, favicon_url, primary_color, bg_color, custom_domain, custom_css, hide_branding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(uuid.v4(), userId, workspaceId, wl.brand_name || 'SwiftDisplay', wl.logo_url || null, wl.favicon_url || null, wl.primary_color || '#3B82F6', wl.bg_color || '#111827', wl.custom_domain || null, wl.custom_css || null, wl.hide_branding || 0);
+        db.prepare(`INSERT INTO white_labels (id, user_id, workspace_id, brand_name, logo_url, favicon_url, primary_color, bg_color, custom_domain, custom_css, hide_branding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(uuid.v4(), userId, workspaceId, wl.brand_name || 'SwiftDisplay', wl.logo_url || null, wl.favicon_url || null, wl.primary_color || '#e65c00', wl.bg_color || '#111827', wl.custom_domain || null, wl.custom_css || null, wl.hide_branding || 0);
       }
     }
   });

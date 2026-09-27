@@ -1,8 +1,8 @@
 {
-  "name": "screentinker",
+  "name": "swiftdisplay",
   "version": "2.0.8",
   "license": "MIT",
-  "description": "ScreenTinker - Digital Signage Management Server",
+  "description": "SwiftDisplay - Digital Signage Management Server",
   "main": "server.js",
   "scripts": {
     "start": "node --env-file-if-exists=.env server.js",

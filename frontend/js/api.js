@@ -662,6 +662,9 @@ export const api = {
   adminListOrgs: () => request('/admin/orgs'),
   // Platform-admin view: EVERY plan incl. hidden ones, with subscriber counts.
   adminListPlans: () => request('/admin/plans'),
+  adminUpdatePlan: (id, data) => request(`/admin/plans/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  adminGetLandingSettings: () => request('/admin/landing-settings'),
+  adminUpdateLandingSettings: (data) => request('/admin/landing-settings', { method: 'PUT', body: JSON.stringify(data) }),
   adminDeleteOrg: (id) => request(`/admin/orgs/${id}`, { method: 'DELETE' }),
   adminDeleteWorkspace: (id) => request(`/admin/workspaces/${id}`, { method: 'DELETE' }),
   aiGetSettings: () => request('/ai/settings'),

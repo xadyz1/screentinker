@@ -715,7 +715,7 @@
       }
       if (!captured) {
         ctx.fillStyle = '#111827'; ctx.fillRect(0, 0, 960, 540);
-        ctx.fillStyle = '#3b82f6'; ctx.font = 'bold 28px sans-serif'; ctx.textAlign = 'center';
+        ctx.fillStyle = '#e65c00'; ctx.font = 'bold 28px sans-serif'; ctx.textAlign = 'center';
         ctx.fillText('ScreenTinker (Tizen)', 480, 235);
         ctx.fillStyle = '#94a3b8'; ctx.font = '16px sans-serif';
         ctx.fillText('Live preview unavailable for video / YouTube on Tizen', 480, 280);

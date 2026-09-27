@@ -76,7 +76,7 @@ test('THE MIXED FLEET: one Android member drops the whole group back to our prot
   ]);
   const first = db.prepare('SELECT device_id FROM device_group_members WHERE group_id = ? ORDER BY device_id').get(g);
   const gs = __test.resolveGroupSync({ playlist_id: PL }, first.device_id);
-  assert.equal(gs.backend, 'screentinker');
+  assert.equal(gs.backend, 'swiftdisplay');
   assert.equal(gs.sync_downgraded, true);
   assert.match(gs.sync_reason, /non-BrightSign/);
 });
@@ -88,7 +88,7 @@ test('THE SILENT SPLIT: BrightSigns on different subnets do not get multicast sy
   ]);
   const first = db.prepare('SELECT device_id FROM device_group_members WHERE group_id = ? ORDER BY device_id').get(g);
   const gs = __test.resolveGroupSync({ playlist_id: PL }, first.device_id);
-  assert.equal(gs.backend, 'screentinker');
+  assert.equal(gs.backend, 'swiftdisplay');
   assert.match(gs.sync_reason, /multicast|different networks/);
 });
 
@@ -102,7 +102,7 @@ test('THE DEAD LEADER: native sync falls back when nobody is left to broadcast',
   ]);
   const first = db.prepare('SELECT device_id FROM device_group_members WHERE group_id = ? ORDER BY device_id').get(g);
   const gs = __test.resolveGroupSync({ playlist_id: PL }, first.device_id);
-  assert.equal(gs.backend, 'screentinker');
+  assert.equal(gs.backend, 'swiftdisplay');
   assert.equal(gs.sync_downgraded, true);
   assert.match(gs.sync_reason, /leader is offline/);
 });
@@ -127,6 +127,6 @@ test('an operator choosing our protocol on an all-BrightSign group is obeyed, no
   ]);
   const first = db.prepare('SELECT device_id FROM device_group_members WHERE group_id = ? ORDER BY device_id').get(g);
   const gs = __test.resolveGroupSync({ playlist_id: PL }, first.device_id);
-  assert.equal(gs.backend, 'screentinker');
+  assert.equal(gs.backend, 'swiftdisplay');
   assert.equal(gs.sync_downgraded, false);
 });

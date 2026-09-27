@@ -349,7 +349,7 @@ router.post('/', (req, res) => {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(id, req.user.id, targetWorkspaceId, device_id || null, group_id || null, zone_id || null, content_id || null, widget_id || null,
     layout_id || null, effectivePlaylistId, title || '', start_time, end_time, timezone || targetTz || 'UTC',
-    recurrence || null, recurrence_end || null, priority || 0, color || '#3B82F6');
+    recurrence || null, recurrence_end || null, priority || 0, color || '#e65c00');
 
   const schedule = db.prepare('SELECT * FROM schedules WHERE id = ?').get(id);
   res.status(201).json(schedule);

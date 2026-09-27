@@ -28,8 +28,11 @@ h1, h2, h3, h4, h5, h6, .logo {
 }
 
 .sidebar-header {
-  padding: 20px 16px;
+  padding: 16px;
   border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .logo {
@@ -39,6 +42,13 @@ h1, h2, h3, h4, h5, h6, .logo {
   color: var(--accent);
   font-weight: 700;
   font-size: 16px;
+}
+
+.sidebar-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 /* Workspace switcher (Phase 3 MVP). Sits in sidebar-header below the logo.
@@ -275,6 +285,30 @@ h1, h2, h3, h4, h5, h6, .logo {
 .sidebar-footer {
   padding: 16px;
   border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.theme-toggle-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.theme-toggle-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .connection-status {
@@ -613,7 +647,7 @@ h1, h2, h3, h4, h5, h6, .logo {
 .device-card:hover .device-card-select,
 .device-card.selected .device-card-select { opacity: 1; }
 .device-card-select input { cursor: pointer; margin: 0; }
-.device-card.selected { outline: 2px solid var(--primary, #3B82F6); outline-offset: -2px; }
+.device-card.selected { outline: 2px solid var(--primary, #e65c00); outline-offset: -2px; }
 
 /* Wall editor — free-form pan/zoom canvas */
 .wall-viewport {
@@ -656,7 +690,7 @@ h1, h2, h3, h4, h5, h6, .logo {
 .wall-screen {
   position: absolute;
   background: rgba(59,130,246,0.08);
-  border: 2px solid var(--primary, #3B82F6);
+  border: 2px solid var(--primary, #e65c00);
   border-radius: 4px;
   box-sizing: border-box;
   cursor: move;
@@ -807,7 +841,7 @@ h1, h2, h3, h4, h5, h6, .logo {
 }
 .wall-cell.occupied {
   background: rgba(59,130,246,0.15);
-  border: 2px solid var(--primary, #3B82F6);
+  border: 2px solid var(--primary, #e65c00);
   cursor: grab;
 }
 .wall-cell.occupied:active { cursor: grabbing; }
@@ -899,11 +933,11 @@ h1, h2, h3, h4, h5, h6, .logo {
 .device-card-progress-fill {
   height: 100%;
   width: 0%;
-  background: var(--primary, #3B82F6);
+  background: var(--primary, #e65c00);
   transition: width 0.9s linear;
 }
 .device-card-progress-fill.indeterminate {
-  background: linear-gradient(90deg, transparent, var(--primary, #3B82F6), transparent);
+  background: linear-gradient(90deg, transparent, var(--primary, #e65c00), transparent);
   background-size: 50% 100%;
   animation: dcp-indeterminate 1.4s linear infinite;
 }

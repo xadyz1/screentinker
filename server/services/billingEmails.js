@@ -68,7 +68,7 @@ function receiptText({ name, amountLabel, planName, periodEnd, invoiceUrl }) {
     '',
     'Your screens carry on as they are — nothing needs doing.',
     '',
-    'ScreenTinker',
+    'SwiftDisplay',
   ];
   return lines.filter((l) => l !== null).join('\n');
 }
@@ -92,9 +92,9 @@ function receiptHtml({ name, amountLabel, planName, periodEnd, invoiceUrl }) {
     ${row('Plan', planName)}
     ${row('Next renewal', periodEnd)}
   </table>
-  ${invoiceUrl ? `<p><a href="${esc(invoiceUrl)}" style="color:#3b82f6">View your invoice</a></p>` : ''}
+  ${invoiceUrl ? `<p><a href="${esc(invoiceUrl)}" style="color:#e65c00">View your invoice</a></p>` : ''}
   <p style="color:#666">Your screens carry on as they are — nothing needs doing.</p>
-  <p style="color:#666">ScreenTinker</p>
+  <p style="color:#666">SwiftDisplay</p>
 </div>`;
 }
 

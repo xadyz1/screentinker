@@ -246,7 +246,7 @@ export async function render(container) {
               <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('schedule.repeat_until_hint')}</div>
             </div>
           <div class="form-group"><label>${t('schedule.priority')}</label><input type="number" id="schedPriority" class="input" value="0" min="0" max="100"></div>
-          <div class="form-group"><label>${t('schedule.color')}</label><input type="color" id="schedColor" value="#3B82F6" style="width:60px;height:32px;border:none;cursor:pointer"></div>
+          <div class="form-group"><label>${t('schedule.color')}</label><input type="color" id="schedColor" value="#e65c00" style="width:60px;height:32px;border:none;cursor:pointer"></div>
         </div>
         <div class="modal-footer" style="display:flex;justify-content:space-between;gap:8px">
           <button class="btn btn-danger" id="deleteScheduleBtn" style="display:none">${t('common.delete')}</button>
@@ -325,7 +325,7 @@ export async function render(container) {
   // Stable colour per target, so the same screen is the same colour every week and
   // across reloads. Hashing the id beats cycling a palette by index, which reshuffles
   // whenever a device is added or removed.
-  const TARGET_COLORS = ['#3B82F6','#8B5CF6','#EC4899','#F59E0B','#10B981','#06B6D4','#EF4444','#84CC16','#A855F7','#14B8A6'];
+  const TARGET_COLORS = ['#e65c00','#8B5CF6','#EC4899','#F59E0B','#10B981','#06B6D4','#EF4444','#84CC16','#A855F7','#14B8A6'];
   function colorForTarget(key) {
     let h = 0;
     for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
@@ -406,7 +406,7 @@ export async function render(container) {
       // In all-screens mode colour identifies WHO the block is for, so several targets share
       // one grid and stay tellable apart. On a single screen the schedule's own colour is
       // kept — there is only one target, so colour is free to mean something else.
-      const bg = allScreens ? colorForTarget(target.key) : (ev.color || '#3B82F6');
+      const bg = allScreens ? colorForTarget(target.key) : (ev.color || '#e65c00');
       const tall = duration * HOUR_PX >= 34;
       block.style.cssText = `position:absolute;top:${topOffset}px;left:2px;right:2px;height:${Math.max(18, duration * HOUR_PX)}px;
         background:${bg};border-radius:3px;padding:2px 4px;font-size:10px;color:white;overflow:hidden;cursor:grab;z-index:1;opacity:0.92;
@@ -460,7 +460,7 @@ export async function render(container) {
           const dt = new Date(currentWeekStart); dt.setDate(dt.getDate() + i);
           const on = i === focusedDay;
           return `<button class="btn btn-sm" data-day-pick="${i}" style="flex:1;min-width:40px;padding:6px 4px;font-size:11px;
-            ${on ? 'background:var(--accent,#3B82F6);color:#fff;border-color:transparent' : ''}">${d}<br>${dt.getDate()}</button>`;
+            ${on ? 'background:var(--accent,#e65c00);color:#fff;border-color:transparent' : ''}">${d}<br>${dt.getDate()}</button>`;
         }).join('');
         strip.querySelectorAll('[data-day-pick]').forEach((b) => {
           b.addEventListener('click', () => { focusedDay = Number(b.dataset.dayPick); loadCalendar(); });
@@ -548,7 +548,7 @@ export async function render(container) {
       ghostEl = document.createElement('div');
       ghostEl.className = 'sched-ghost';
       ghostEl.style.cssText = 'position:absolute;left:2px;right:2px;border-radius:3px;z-index:5;pointer-events:none;'
-        + 'background:var(--accent,#3B82F6);opacity:.55;color:#fff;font-size:10px;padding:2px 4px;line-height:1.2;'
+        + 'background:var(--accent,#e65c00);opacity:.55;color:#fff;font-size:10px;padding:2px 4px;line-height:1.2;'
         + 'border:1px solid rgba(255,255,255,.8);overflow:hidden';
     }
     ghostEl.style.top = `${minutesToPx(startMin - Math.floor(startMin / 60) * 60)}px`;
@@ -751,7 +751,7 @@ export async function render(container) {
         content_id: ev.content_id || null, playlist_id: ev.playlist_id || null, layout_id: ev.layout_id || null,
         title: ev.title ? `${ev.title} (copy)` : null,
         start_time: ev.start_time, end_time: ev.end_time,
-        recurrence: ev.recurrence || null, priority: ev.priority || 0, color: ev.color || '#3B82F6',
+        recurrence: ev.recurrence || null, priority: ev.priority || 0, color: ev.color || '#e65c00',
       }) });
       showToast(t('schedule.toast.saved'), 'success');
     } catch (err) { showToast(err.message, 'error'); }
@@ -811,7 +811,7 @@ export async function render(container) {
     const endEl = document.getElementById('schedRepeatEnd');
     if (endEl) endEl.value = (ev.recurrence_end || '').slice(0, 10);
     document.getElementById('schedPriority').value = ev.priority || 0;
-    document.getElementById('schedColor').value = ev.color || '#3B82F6';
+    document.getElementById('schedColor').value = ev.color || '#e65c00';
 
     if (ev.group_id) {
       groupRadio.checked = true;

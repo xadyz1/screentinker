@@ -2018,7 +2018,7 @@ function migrateGroupSchedules() {
         recurrence_end  TEXT,
         priority        INTEGER NOT NULL DEFAULT 0,
         enabled         INTEGER NOT NULL DEFAULT 1,
-        color           TEXT DEFAULT '#3B82F6',
+        color           TEXT DEFAULT '#e65c00',
         created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
         updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
         CHECK ((device_id IS NOT NULL AND group_id IS NULL) OR (device_id IS NULL AND group_id IS NOT NULL))
