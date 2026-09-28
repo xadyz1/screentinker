@@ -104,15 +104,10 @@
       </div>
       <div class="nav-links">
         <a href="#" data-i18n="landing.nav.home">Home</a>
-<<<<<<< Updated upstream
         <a href="#portable" data-i18n="landing.nav.portable_tv">Portable TV</a>
         <a href="#" data-i18n="landing.nav.api_docs">API + Docs</a>
         <a href="#" data-i18n="landing.nav.blog">Blog</a>
         <a href="#" data-i18n="landing.nav.contact">Contact</a>
-=======
-        <a href="/blog" data-i18n="landing.nav.blog">Blog</a>
-        <a href="/contact" data-i18n="landing.nav.contact">Contact</a>
->>>>>>> Stashed changes
       </div>
       <div class="nav-actions">
         <select id="lang-selector" class="lang-selector">
@@ -303,13 +298,10 @@
     <div>
       <h2 data-i18n="landing.footer.title">Ready to transform your displays?</h2>
       <p data-i18n="landing.footer.desc">Join thousands of users who trust SwiftDisplay to manage their screens. Get started today with no credit card required.</p>
-<<<<<<< Updated upstream
       <div style="display:flex; gap:1rem;">
         <button class="btn btn-secondary" data-i18n="landing.footer.cta">Create free account</button>
         <button class="btn btn-secondary" data-i18n="landing.footer.sales">Talk to Sales</button>
       </div>
-=======
->>>>>>> Stashed changes
     </div>
     <div>
       <img src="/assets/swiftdisplaylogo.png" alt="SwiftDisplay" style="height:64px; opacity:0.8;">
@@ -329,113 +321,11 @@
     </div>
   </footer>
 
-<<<<<<< Updated upstream
   <script type="module">
     import { setLanguage, t, getLanguage } from '/js/i18n.js';
     
     function translateStaticDom() {
       document.querySelectorAll('[data-i18n]').forEach((el) => {
-=======
-  <script>
-    const translations = {
-       en: {
-        'landing.nav.home': 'Home',
-        'landing.nav.blog': 'Blog',
-        'landing.nav.contact': 'Contact',
-        'landing.nav.login': 'Login',
-        'landing.hero.title_part1': 'Communicate with ',
-        'landing.hero.title_part2': 'Impact',
-        'landing.hero.subtitle': 'The easiest way to manage your digital screens remotely. Create beautiful layouts, schedule content, and engage your audience in minutes.',
-        'landing.hero.cta': 'Get Started',
-        'landing.industry.title': 'Tailored for your industry',
-        'landing.industry.subtitle': 'Flexible solutions for diverse environments.',
-        'landing.features.works_anywhere': 'WORKS ANYWHERE',
-        'landing.features.access_anywhere': 'Access from any device, anytime',
-        'landing.features.customization': 'CUSTOMIZATION OPTIONS',
-        'landing.features.customization_desc': 'Create unique displays perfectly adapted to your business',
-        'landing.pricing.title': 'Simple, Transparent Pricing',
-        'landing.pricing.subtitle': 'Choose the plan that fits your needs. No hidden fees.',
-        'landing.pricing.monthly': 'Monthly',
-        'landing.pricing.yearly': 'Yearly',
-        'landing.pricing.save': '20% off',
-        'landing.pricing.basic': 'Basic',
-        'landing.pricing.basic_desc': '1 display',
-        'landing.pricing.basic_f1': 'Unlimited content',
-        'landing.pricing.basic_f2': 'Standard support',
-        'landing.pricing.cta': 'Choose Plan',
-        'landing.pricing.standard': 'Standard',
-        'landing.pricing.standard_desc': 'Up to 5 displays',
-        'landing.pricing.standard_f1': 'Unlimited content',
-        'landing.pricing.standard_f2': 'Priority support',
-        'landing.pricing.standard_f3': 'Custom Dashboard Logo',
-        'landing.pricing.standard_f4': 'Team Members',
-        'landing.pricing.cta_popular': 'Get Started',
-        'landing.pricing.premium': 'Premium',
-        'landing.pricing.premium_desc': 'Up to 15 displays',
-        'landing.pricing.premium_f1': 'Unlimited content',
-'landing.pricing.premium_f2': 'Priority support',
-        'landing.pricing.premium_f3': 'Whitelabel',
-        'landing.pricing.premium_f4': 'Dedicated Manager',
-        'landing.footer.title': 'Ready to transform your displays?',
-        'landing.footer.desc': 'Join thousands of users who trust SwiftDisplay to manage their screens. Get started today with no credit card required.',
-        'landing.signup.title': 'Create your account',
-        'landing.signup.subtitle': 'Enter your details to start your subscription',
-        'landing.signup.create_account': 'Create account',
-        'landing.signup.terms': 'By creating an account, you agree to our Terms of Service and Privacy Policy.',
-        'landing.signup.check_email': 'Please check your email ({email}) to verify your account.',
-      },
-      pt: {
-        'landing.nav.home': 'Início',
-        'landing.nav.blog': 'Blog',
-        'landing.nav.contact': 'Contacto',
-        'landing.nav.login': 'Iniciar sessão',
-        'landing.hero.title_part1': 'Comunique com ',
-        'landing.hero.title_part2': 'Impacto',
-        'landing.hero.subtitle': 'A forma mais fácil de gerir os seus ecrãs digitais à distância. Crie layouts bonitos, agende conteúdos e envolva o seu público em minutos.',
-        'landing.hero.cta': 'Começar',
-        'landing.industry.title': 'Adaptado para a sua indústria',
-        'landing.industry.subtitle': 'Soluções flexíveis para ambientes diversos.',
-        'landing.features.works_anywhere': 'FUNCIONA EM QUALQUER LUGAR',
-        'landing.features.access_anywhere': 'Acesso de qualquer dispositivo, a qualquer hora',
-        'landing.features.customization': 'OPÇÕES DE PERSONALIZAÇÃO',
-        'landing.features.customization_desc': 'Crie displays únicos perfeitamente adaptados ao seu negócio',
-        'landing.pricing.title': 'Preços Simples e Transparentes',
-        'landing.pricing.subtitle': 'Escolha o plano que melhor se adapta às suas necessidades. Sem taxas escondidas.',
-        'landing.pricing.monthly': 'Mensal',
-        'landing.pricing.yearly': 'Anual',
-        'landing.pricing.save': '20% desconto',
-        'landing.pricing.basic': 'Básico',
-        'landing.pricing.basic_desc': '1 ecrã',
-        'landing.pricing.basic_f1': 'Conteúdo ilimitado',
-        'landing.pricing.basic_f2': 'Suporte padrão',
-        'landing.pricing.cta': 'Escolher Plano',
-        'landing.pricing.standard': 'Standard',
-        'landing.pricing.standard_desc': 'Até 5 ecrãs',
-        'landing.pricing.standard_f1': 'Conteúdo ilimitado',
-        'landing.pricing.standard_f2': 'Suporte prioritário',
-        'landing.pricing.standard_f3': 'Logotipo Personalizado do Painel',
-        'landing.pricing.standard_f4': 'Membros da Equipa',
-        'landing.pricing.cta_popular': 'Começar',
-        'landing.pricing.premium': 'Premium',
-        'landing.pricing.premium_desc': 'Até 15 ecrãs',
-        'landing.pricing.premium_f1': 'Conteúdo ilimitado',
-        'landing.pricing.premium_f2': 'Suporte prioritário',
-        'landing.pricing.premium_f3': 'Marca Branca',
-        'landing.pricing.premium_f4': 'Gestor Dedicado',
-        'landing.footer.title': 'Pronto para transformar os seus ecrãs?',
-        'landing.footer.desc': 'Junte-se a milhares de utilizadores que confiam no SwiftDisplay para gerir os seus ecrãs. Comece hoje sem cartão de crédito.',
-        'landing.signup.title': 'Crie a sua conta',
-        'landing.signup.subtitle': 'Insira os seus dados para iniciar a subscrição',
-        'landing.signup.create_account': 'Criar conta',
-        'landing.signup.terms': 'Ao criar uma conta, concorda com os nossos Termos de Serviço e Política de Privacidade.',
-        'landing.signup.check_email': 'Verifique o seu email ({email}) para confirmar a sua conta.',
-      }
-    };
-
-    function applyLang(lang) {
-      const t = translations[lang] || translations.en;
-      document.querySelectorAll('[data-i18n]').forEach(el => {
->>>>>>> Stashed changes
         const key = el.getAttribute('data-i18n');
         el.textContent = t(key);
       });
